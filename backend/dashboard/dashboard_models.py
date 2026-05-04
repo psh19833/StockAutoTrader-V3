@@ -153,6 +153,15 @@ class WebSocketStatusView:
 
 
 @dataclass(frozen=True)
+class DataRouterStatusView:
+    """REST + WebSocket data router 상태 표시 (Read-Only)."""
+    ws_connected: bool = False
+    rest_available: bool = True
+    stale_warnings: list[str] = field(default_factory=list)
+    source: str = "KIS_API_REST"
+
+
+@dataclass(frozen=True)
 class DashboardSummary:
     system: SystemStatusView
     session: SessionStatusView
