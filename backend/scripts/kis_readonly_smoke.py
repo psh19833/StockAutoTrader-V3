@@ -116,7 +116,9 @@ def _safe_error(e: Exception) -> str:
 
 
 def main():
-    symbol = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SYMBOL
+    use_real = "--real" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    symbol = args[0] if args else DEFAULT_SYMBOL
 
     from dotenv import load_dotenv
     load_dotenv()
@@ -130,18 +132,26 @@ def main():
         print("ERROR: KIS_APP_KEY and KIS_APP_SECRET must be set in .env")
         sys.exit(1)
 
-    # ⚠️ RealTransport는 실제 HTTP 호출 — 운영 환경에서만 사용
-    # 이 예제에서는 transport 없이 실행 → KisClient가 TransportResponse(404) 반환
-    # 실제 실행 시에는 RealTransport 주입 필요
+    # Transport 선택
+    transport = None
+    if use_real:
+        from kis.transport import RealTransport
+        transport = RealTransport(timeout=30)
+        transport_mode = "REAL"
+    else:
+        from kis.transport import StubTransport
+        transport = StubTransport()
+        transport_mode = "STUB"
+
     print("=" * 50)
     print("SAT3 KIS Read-Only Smoke Test")
     print("=" * 50)
     print(f"Symbol: {symbol}")
-    print("WARNING: RealTransport not configured — add transport for actual calls")
+    print(f"Mode: {transport_mode}")
     print("=" * 50)
 
     result = run_smoke_with_transport(
-        transport=None,  # RealTransport 필요 시 주입
+        transport=transport,
         symbol=symbol,
         app_key=app_key, app_secret=app_secret,
         base_url=base_url, account_no=account_no,

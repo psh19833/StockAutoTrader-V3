@@ -38,3 +38,70 @@ class StubTransport:
         if path in self._responses:
             return TransportResponse(200, self._responses[path])
         return TransportResponse(404, {"error": "not_found"})
+
+
+class RealTransport:
+    """운영용 Real Transport — 실제 KIS HTTP 호출
+
+    requests/httpx 사용은 이 클래스 내부로만 격리한다.
+    주문 endpoint는 get_json/post_json 진입 시 차단된다.
+    """
+
+    def __init__(self, timeout: int = 30):
+        self._timeout = timeout
+
+    def _check_order_endpoint(self, path: str) -> None:
+        from kis.errors import OrderEndpointBlockedError
+        order_paths = [
+            "/uapi/domestic-stock/v1/trading/order-cash",
+            "/uapi/domestic-stock/v1/trading/order-credit",
+            "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+        ]
+        if any(path.startswith(p) for p in order_paths):
+            raise OrderEndpointBlockedError(f"Order endpoint blocked: {path}")
+
+    def get_json(self, path: str, params: dict | None = None) -> TransportResponse:
+        self._check_order_endpoint(path)
+        import urllib.request
+        import json
+        try:
+            req = urllib.request.Request(path, method="GET")
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                return TransportResponse(
+                    status_code=resp.status,
+                    body=body if isinstance(body, dict) else {"data": body},
+                )
+        except urllib.error.HTTPError as e:
+            return TransportResponse(status_code=e.code, body={"error": str(e)})
+        except urllib.error.URLError as e:
+            raise ConnectionError(f"Network error: {e}")
+        except json.JSONDecodeError:
+            return TransportResponse(status_code=200, body={"error": "json_parse_error"})
+        except Exception as e:
+            return TransportResponse(status_code=500, body={"error": str(e)})
+
+    def post_json(self, path: str, json_data: dict | None = None) -> TransportResponse:
+        self._check_order_endpoint(path)
+        import urllib.request
+        import json
+        try:
+            data = json.dumps(json_data or {}).encode("utf-8")
+            req = urllib.request.Request(
+                path, data=data, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                return TransportResponse(
+                    status_code=resp.status,
+                    body=body if isinstance(body, dict) else {"data": body},
+                )
+        except urllib.error.HTTPError as e:
+            return TransportResponse(status_code=e.code, body={"error": str(e)})
+        except urllib.error.URLError as e:
+            raise ConnectionError(f"Network error: {e}")
+        except json.JSONDecodeError:
+            return TransportResponse(status_code=200, body={"error": "json_parse_error"})
+        except Exception as e:
+            return TransportResponse(status_code=500, body={"error": str(e)})
