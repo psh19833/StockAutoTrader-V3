@@ -42,11 +42,40 @@ class KisClient:
         rate_limiter: KisRateLimiter | None = None,
         auth_manager: KisAuthManager | None = None,
         source_policy: SourcePolicy | None = None,
+        transport = None,
+        app_key: str = "",
+        app_secret: str = "",
     ):
         self.base_url = base_url or KIS_REAL_BASE_URL
         self.rate_limiter = rate_limiter or KisRateLimiter()
-        self.auth_manager = auth_manager or KisAuthManager()
+        self.auth_manager = auth_manager or KisAuthManager(app_key=app_key, app_secret=app_secret)
         self.source_policy = source_policy or SourcePolicy()
+        self._transport = transport
+
+    def _check_order_endpoint(self, path: str) -> None:
+        """주문 endpoint 호출 차단"""
+        from kis.errors import OrderEndpointBlockedError
+        order_paths = [
+            "/uapi/domestic-stock/v1/trading/order-cash",
+            "/uapi/domestic-stock/v1/trading/order-credit",
+            "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+        ]
+        if any(path.startswith(p) for p in order_paths):
+            raise OrderEndpointBlockedError(f"Order endpoint blocked: {path}")
+
+    def get_json(self, path: str, params: dict | None = None):
+        self._check_order_endpoint(path)
+        if self._transport is None:
+            from kis.transport import TransportResponse
+            return TransportResponse(404, {"error": "no_transport"})
+        return self._transport.get_json(path, params)
+
+    def post_json(self, path: str, json_data: dict | None = None):
+        self._check_order_endpoint(path)
+        if self._transport is None:
+            from kis.transport import TransportResponse
+            return TransportResponse(404, {"error": "no_transport"})
+        return self._transport.post_json(path, json_data)
 
     def _build_url(self, path: str) -> str:
         """전체 URL 빌드

@@ -116,3 +116,18 @@ class KisRateLimitError(KisApiError):
 class KisServerError(KisApiError):
     """KIS 서버 오류"""
     pass
+
+
+class NetworkError(Exception):
+    """네트워크 연결 오류"""
+    pass
+
+
+class TimeoutError(Exception):
+    """요청 시간 초과"""
+    pass
+
+
+class OrderEndpointBlockedError(Exception):
+    """주문 endpoint 호출 차단"""
+    pass
