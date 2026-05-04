@@ -174,6 +174,14 @@ def main():
         "--real-ws", action="store_true",
         help="Use GuardedRealWebSocketClient (attempts real connection)"
     )
+    parser.add_argument(
+        "--duration", type=int, default=0,
+        help="Max duration in seconds (0 = no limit)"
+    )
+    parser.add_argument(
+        "--max-messages", type=int, default=0,
+        help="Max messages to receive (0 = no limit)"
+    )
     args = parser.parse_args()
 
     # ── Safety: LIVE_TRADING_ENABLED check ────────────────────────────────
@@ -264,6 +272,11 @@ def main():
     # ── Status ────────────────────────────────────────────────────────────
     status = client.get_status()
     print(f"\n[SUMMARY]")
+    print(f"  mode: {'real-ws' if args.real_ws else 'stub'}")
+    print(f"  symbol: {args.symbol}")
+    print(f"  channels: {channel_names}")
+    print(f"  duration: {args.duration}s" + (" (no limit)" if args.duration == 0 else ""))
+    print(f"  max_messages: {args.max_messages}" + (" (no limit)" if args.max_messages == 0 else ""))
     print(f"  connection_state: {status.connection_state}")
     print(f"  subscribed_channels: {status.subscribed_channels}")
     print(f"  reconnect_count: {status.reconnect_count}")

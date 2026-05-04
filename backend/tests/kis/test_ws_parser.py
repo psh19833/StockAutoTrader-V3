@@ -208,7 +208,7 @@ class TestDispatch:
     def test_dispatch_invalid_json(self):
         result = dispatch_message("not json at all")
         assert result.parsed_ok is False
-        assert any("invalid json" in w.lower() for w in result.data_quality_warnings)
+        assert any("unparseable" in w.lower() for w in result.data_quality_warnings)
 
     def test_dispatch_missing_tr_id(self):
         result = dispatch_message('{"MKSC_SHRN_ISCD": "005930"}')

@@ -208,6 +208,14 @@ class GuardedRealWebSocketClient(WebSocketClient):
         """Store approval_key internally (never exposed in repr/log)."""
         self._approval_key = approval_key
 
+    def _heartbeat(self) -> None:
+        """Update last_message_at for keep-alive tracking.
+
+        Only updates when in CONNECTED state.
+        """
+        if self._connection_state == ConnectionState.CONNECTED:
+            self._last_message_at = datetime.now(timezone.utc)
+
     def build_subscribe_payload(self, tr_id: str, symbol: str,
                                  approval_key: str) -> dict:
         """Build wire-level subscribe payload.

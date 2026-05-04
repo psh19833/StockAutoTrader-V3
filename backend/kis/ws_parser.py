@@ -208,6 +208,51 @@ def parse_expected_execution(raw: str) -> RealtimeExpectedExecution:
 
 # ── TR_ID dispatch table ─────────────────────────────────────────────────────
 
+# KIS WebSocket pipe-delimited field mapping per TR_ID
+# Format: "0|TR_ID|symbol|field1|field2|..."
+_PIPE_TR_FIELDS = {
+    "H0STCNT0": ["tr_type", "tr_id", "MKSC_SHRN_ISCD", "STCK_PRPR", "CNTG_VOL",
+                  "STCK_CNTG_HOUR", "change_sign", "change_price"],
+    "H0STASP0": ["tr_type", "tr_id", "MKSC_SHRN_ISCD",
+                  "ASKP1", "ASKP2", "ASKP3", "ASKP4", "ASKP5",
+                  "ASKP6", "ASKP7", "ASKP8", "ASKP9", "ASKP10",
+                  "BIDP1", "BIDP2", "BIDP3", "BIDP4", "BIDP5",
+                  "BIDP6", "BIDP7", "BIDP8", "BIDP9", "BIDP10"],
+    "H0STCNI0": ["tr_type", "tr_id", "MKSC_SHRN_ISCD", "ODNO",
+                  "FTNG_ORD_PRC", "FTNG_ORD_QTY"],
+    "H0STMKO0": ["tr_type", "tr_id", "MKSC_SHRN_ISCD",
+                  "MKSC_STATUS", "MKSC_SESSION"],
+    "H0STANC0": ["tr_type", "tr_id", "MKSC_SHRN_ISCD",
+                  "STCK_ANT_CNTG_PRC", "ANT_CNTG_QTY", "ANT_CNTG_VS"],
+}
+
+
+def _parse_pipe_delimited(raw: str) -> dict | None:
+    """Parse KIS WebSocket pipe-delimited format into a dict.
+
+    Format: "0|TR_ID|symbol|field1|field2|..."
+
+    Returns None if unparseable.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    parts = raw.strip().split("|")
+    if len(parts) < 2:
+        return None
+    tr_id = parts[1] if len(parts) > 1 else ""
+    fields = _PIPE_TR_FIELDS.get(tr_id)
+    if fields is None:
+        # Unknown TR_ID: try generic mapping
+        return {"tr_id": tr_id}
+    result = {}
+    for i, field_name in enumerate(fields):
+        if i < len(parts):
+            result[field_name] = parts[i]
+        else:
+            break
+    return result
+
+
 _DISPATCH_TABLE = {
     "H0STCNT0": parse_trade_tick,
     "H0STASP0": parse_order_book,
@@ -223,17 +268,32 @@ def dispatch_message(raw: str) -> WebSocketMessageBase:
     TR_ID 기준으로 적절한 parser를 선택하고, 알 수 없는 TR_ID는
     parsed_ok=False인 WebSocketMessageBase를 반환한다.
 
+    지원 형식:
+      - JSON: {"tr_id": "H0STCNT0", ...}
+      - Pipe-delimited: "0|H0STCNT0|005930|..." (KIS WebSocket 기본)
+
     이 함수는 raw 전문 전체를 로그/저장하지 않으며, raw_hash만 보존한다.
     """
     h = compute_raw_hash(raw)
 
-    # Parse JSON to extract tr_id
+    # Try JSON first
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
+        # Try pipe-delimited format
+        data = _parse_pipe_delimited(raw)
+
+    if data is None:
         return WebSocketMessageBase(
             parsed_ok=False,
-            data_quality_warnings=["invalid json"],
+            data_quality_warnings=["unparseable message format"],
+            raw_hash=h,
+        )
+
+    if not isinstance(data, dict):
+        return WebSocketMessageBase(
+            parsed_ok=False,
+            data_quality_warnings=["unparseable message format"],
             raw_hash=h,
         )
 
