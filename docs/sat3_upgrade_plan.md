@@ -2,6 +2,7 @@
 
 > 이 문서는 SAT2(StockAutoTrader V2)의 구조 분석 결과와 SAT3(StockAutoTrader V3)로의 업그레이드 계획을 정의합니다.
 > 생성일: 2026-05-04
+> 최종 수정: Phase 4 완료 시점 반영
 
 ---
 
@@ -134,9 +135,11 @@ SAT2는 Phase 0 검색 기준:
 3. 정량평가 중심 종목 선정
 4. Market Regime → Scanner → Quant → Strategy → Risk Engine 순의 엄격한 파이프라인
 5. 모든 판단과 주문이 로그로 추적되는 Audit 시스템
-6. ETF/ETN/파생형 상품 제외
-7. 급등주 단타 전략 중심
+6. ETF/ETN/ELW/REIT/SPAC/인버스/레버리지/UNKNOWN 상품 제외, KOSPI/KOSDAQ 보통주만 매매
+7. 급등주 단타 우선 + 시장상태 기반 멀티 스캐너 (RAPID_SURGE, LIQUIDITY_MOMENTUM, BREAKOUT, PULLBACK_REBOUND)
 8. 실전 주문 전 리스크 엔진 필수 통과
+9. 급등주라는 이유로 Risk Engine 우회 또는 손절 기준 완화 금지
+10. 상품 유형을 알 수 없으면 절대 통과시키지 않음
 ```
 
 ### 3.2 SAT2에서 가져올 것
@@ -154,43 +157,298 @@ SAT2는 Phase 0 검색 기준:
 - `replay/` 시스템 — SAT3 구조와 불일치
 - 복잡한 프론트엔드 — 가능하면 단순 CLI 기반
 
-### 3.4 SAT3 목표 아키텍처
+### 3.4 SAT3 현재 아키텍처 (Phase 4 완료 기준)
 
 ```text
-┌─────────────────────────────────────────────┐
-│                 CLI / MCP                    │
-├─────────────────────────────────────────────┤
-│      Market Regime → Scanner → Quant        │
-│      → Strategy → Risk Engine → Order Gate  │
-├─────────────────────────────────────────────┤
-│            KIS API Gateway                   │
-├─────────────────────────────────────────────┤
-│         Database (SQLite/PostgreSQL)         │
-├─────────────────────────────────────────────┤
-│         Audit Log System                     │
-└─────────────────────────────────────────────┘
+backend/
+├─ kis/                          # Phase 1 — KIS API Gateway
+│  ├─ client.py
+│  ├─ auth.py
+│  ├─ endpoints.py
+│  ├─ rate_limit.py
+│  ├─ errors.py
+│  ├─ schemas.py
+│  ├─ raw_logger.py
+│  └─ source_policy.py
+│
+├─ session/                      # Phase 2 — Trading Session Engine
+│  ├─ trading_calendar.py
+│  ├─ session_state.py
+│  ├─ market_clock.py
+│  ├─ session_policy.py
+│  ├─ session_scheduler.py
+│  ├─ session_guard.py
+│  └─ session_events.py
+│
+├─ audit_logging/                # Phase 3 — Audit Logging Engine
+│  ├─ audit_event.py             #   27종 AuditEventType
+│  ├─ audit_writer.py            #   InMemoryAuditWriter
+│  ├─ log_sanitizer.py           #   Secret masking
+│  ├─ correlation.py
+│  ├─ retention.py
+│  └─ logger.py
+│
+├─ notifications/                # Phase 3B — Telegram Event Notification
+│  ├─ telegram_event.py          #   20종 TelegramEventType
+│  ├─ telegram_formatter.py      #   AuditEvent → Telegram 메시지
+│  ├─ telegram_policy.py         #   Allowlist/blocklist/throttling
+│  ├─ telegram_sender.py         #   InMemoryTelegramSender
+│  └─ telegram_notifier.py       #   Policy → Formatter → Sender
+│
+├─ market_regime/                # Phase 4 — Market Regime Engine
+│  ├─ regime_state.py            #   BULL/NEUTRAL/BEAR/UNKNOWN
+│  ├─ regime_score.py            #   7개 세부 점수 + Risk Penalty
+│  ├─ regime_result.py
+│  ├─ regime_inputs.py           #   KIS_API source 검증
+│  ├─ regime_policy.py           #   분류 + 정책 결정
+│  ├─ regime_calculator.py       #   8개 계산 함수
+│  └─ regime_audit.py            #   → MARKET_REGIME_EVALUATED
+│
+├─ scanner/                      # Phase 5 — Scanner (예정)
+│  ├─ scanner_types.py
+│  ├─ candidate.py
+│  ├─ exclusion_reasons.py
+│  ├─ common_filters.py
+│  ├─ scanner_engine.py
+│  ├─ rapid_surge_scanner.py
+│  ├─ liquidity_momentum_scanner.py
+│  ├─ breakout_scanner.py
+│  ├─ pullback_rebound_scanner.py
+│  └─ scan_audit.py
+│
+├─ quant/                        # Phase 5 — Quant Evaluation (예정)
+│  ├─ candidate_score.py
+│  ├─ score_components.py
+│  ├─ scoring_config.py
+│  ├─ rapid_surge_score.py
+│  ├─ pullback_score.py
+│  ├─ market_adjustment.py
+│  ├─ quant_evaluator.py
+│  └─ quant_audit.py
+│
+├─ strategies/                   # Phase 6 — Strategy Engine (예정)
+├─ risk/                         # Phase 6 — Risk Engine (예정)
+├─ orders/                       # Phase 7 — Order Gate (예정)
+├─ portfolio/                    # Phase 7 — Portfolio Sync (예정)
+├─ reports/                      # Phase 8 — EOD Report (예정)
+│
+├─ tests/
+│  ├─ test_kis_*.py              # Phase 1 (128 tests)
+│  ├─ test_session_*.py          # Phase 2 (88 tests)
+│  ├─ test_audit_logging.py     # Phase 3 (56 tests)
+│  ├─ test_telegram_notification.py # Phase 3B (47 tests)
+│  ├─ test_market_regime.py      # Phase 4 (54 tests)
+│  ├─ test_scanner_*.py          # Phase 5 (예정)
+│  └─ test_quant_*.py            # Phase 5 (예정)
+│
+└─ docs/
+   ├─ 00_SAT3_MASTER_PLAN.md
+   ├─ 01_PHASE_0_*.md
+   ├─ ...
+   ├─ 05_PHASE_4_MARKET_REGIME_ENGINE.md
+   ├─ 06_PHASE_5_SCANNER_QUANT_ENGINE.md
+   ├─ 06B_PHASE_5B_RAPID_SURGE_SCANNER_STRATEGY_POLICY.md
+   └─ 07_PHASE_6_STRATEGY_RISK_ENGINE.md (예정)
 ```
 
 ---
 
-## 4. Phase별 개발 순서
+## 4. Phase별 개발 순서 (완료 현황 반영)
 
-| Phase | 내용 | 범위 |
+| Phase | 내용 | 상태 |
 |-------|------|------|
-| 0 | 설계 문서화 및 SAT2 구조 분석 | **현재 진행 중** |
-| 1 | KIS API Gateway 구현 | kis_client, 인증, 토큰 갱신 |
-| 2 | Market Data Layer | 실시간/히스토리 데이터 |
-| 3 | Market Regime + Scanner | 시장 상태 평가, 종목 스캔 |
-| 4 | Quant Evaluation Engine | 정량 평가 점수 계산 |
-| 5 | Strategy Layer | 매매 전략 신호 생성 |
-| 6 | Risk Engine | 리스크 평가, 주문 차단 |
-| 7 | Order Gate + Execution | 주문 전송, 체결 관리 |
-| 8 | Reporting + Monitoring | 로그, 보고서, 알림 |
-| 9 | Integration + Hardening | 통합 테스트, 안정화 |
+| 0 | 설계 문서화 및 SAT2 구조 분석 | ✅ 완료 |
+| 1 | KIS API Gateway + Source Policy | ✅ 완료 (`7a451d3`) |
+| 2 | Trading Session / Market Schedule Engine | ✅ 완료 (`c794fb0`) |
+| 3 | Audit / Logging Engine | ✅ 완료 (`04351bb`) |
+| 3B | Telegram Event Notification Engine | ✅ 완료 (`37690a5`) |
+| 4 | Market Regime Engine | ✅ 완료 (`9d2a9e2`) |
+| 5 | KOSPI/KOSDAQ Common Stock Scanner + Quant Candidate Evaluation | 🔲 예정 |
+| 5B | KOSPI/KOSDAQ Multi-Scanner + Rapid Surge Strategy Policy | 🔲 예정 (문서화 완료) |
+| 6 | Strategy Engine + Risk Engine | 🔲 예정 |
+| 6B | Fast Exit / Stop Loss 정책 | 🔲 예정 |
+| 7 | Live Order Gate + Order/Fill/Portfolio Sync | 🔲 예정 |
+| 8 | EOD Daily Performance Report + Dashboard Adapter | 🔲 예정 |
+| 9 | Integration Hardening + 안전성 검증 + 릴리즈 준비 | 🔲 예정 |
 
 ---
 
-## 5. 핵심 위험 경고
+## 5. SAT3 매매 Universe 정책 (Phase 5B 기준)
+
+### 5.1 매매 허용
+
+```text
+- KOSPI common stock
+- KOSDAQ common stock
+```
+
+### 5.2 매매 제외
+
+```text
+- ETF
+- ETN
+- ELW
+- REIT
+- SPAC
+- preferred stock / 우선주
+- warrant / 신주인수권
+- inverse product
+- leveraged product
+- management issue
+- investment warning/caution/risk issue
+- trading halt issue
+- delisting/administrative issue
+- product_type UNKNOWN
+- KOSPI/KOSDAQ 외 시장
+```
+
+### 5.3 중요 원칙
+
+```text
+- 상품 유형을 알 수 없으면 제외한다.
+- KOSPI/KOSDAQ 여부를 확인할 수 없으면 제외한다.
+- KIS API source metadata 없이 종목명/패턴으로 허용 판단하지 않는다.
+- Scanner PASS는 매수 신호가 아니다.
+- Quant PASS도 매수 신호가 아니다.
+급등주라는 이유로 Risk Engine을 우회하거나 손절 기준을 완화하지 않는다.
+```
+
+---
+
+## 6. SAT3 Scanner 정책 (Phase 5B 기준)
+
+Scanner는 단순 수집기가 아니라 **정량 조건 기반 후보 발굴기**다.
+
+### 6.1 Scanner 역할
+
+```text
+- KIS API Gateway를 통해 후보 데이터 수집
+- KOSPI/KOSDAQ 보통주만 유지
+- 제외 상품을 정량/메타데이터 기준으로 제거
+- scanner_type별 정량 조건 적용
+- 조건 통과한 종목만 ScannerCandidate로 생성
+- 후보 편입 사유와 탈락 사유 모두 기록
+- 모든 metric과 source_endpoint 기록
+```
+
+### 6.2 Scanner 금지
+
+```text
+- 매수 신호 생성
+- 매도 신호 생성
+- 주문 수량 계산
+- 손절/익절가 확정
+- Risk Engine 역할 수행
+- 주문 허용 여부 판단
+```
+
+### 6.3 Scanner Type 및 Market Regime별 활성 정책
+
+| Scanner Type | 목적 | BULL | NEUTRAL | BEAR | UNKNOWN |
+|---|---|---|---|---|---|
+| **RAPID_SURGE** | 급등 초기 후보 포착 | 적극 허용 | 고득점만 허용 | 비활성/강한 감점 | 차단 |
+| **LIQUIDITY_MOMENTUM** | 안정적 상승 모멘텀 (승률 보완) | 유지 | 중심 | 비활성/감점 | 차단 |
+| **BREAKOUT** | 당일 고점/전고점 돌파 | 적극 허용 | 제한적 허용 | 비활성 | 차단 |
+| **PULLBACK_REBOUND** | 눌림 후 재상승 (추격 위험 완화) | 유지 | 중심 | 비활성/감점 | 차단 |
+
+---
+
+## 7. SAT3 점수 파이프라인
+
+```text
+Market Regime Score (100점 기준)
+  ↓  BULL: +7.5 adjustment
+  ↓  NEUTRAL: 0 adjustment
+  ↓  BEAR/UNKNOWN: new buy blocked, -20~-30 adjustment
+  ↓
+
+Scanner → 정량 조건 필터링 → ScannerCandidate
+  ↓
+
+Quant Candidate Score (Base + Scanner Specific - Risk Penalty)
+  = Liquidity + Spread + Volume + Momentum + Trend + Orderbook
+  + Volatility Safety
+  + RAPID_SURGE 전용: surge_velocity, volume_burst, high_proximity, vi_proximity
+  + PULLBACK_REBOUND 전용: prior_strength, pullback_depth, rebound, support
+  - Symbol Risk Penalty
+  + Market Regime Adjustment
+  ↓
+
+Strategy Engine (Phase 6)
+  ↓  시장 상태 + 후보 점수 → 매수/매도 신호
+
+Risk Engine (Phase 6)
+  ↓  리스크 승인/기각
+
+Session Guard (Phase 2)
+  ↓  장 상태 확인
+
+Order Gate (Phase 7)
+  ↓  실제 주문 전송
+```
+
+---
+
+## 8. Market Regime 정책 요약 (Phase 4)
+
+| 상태 | 점수 | Adjustment | Allow New Buy | Min Score | Risk Penalty 연동 |
+|---|---|---|---|---|---|
+| **BULL** | 70~100 | +7.5 | ✅ | 50 | penalty≥25 → NEUTRAL downgrade |
+| **NEUTRAL** | 40~69 | 0 | ✅ | 50 | penalty≥25 → BEAR downgrade |
+| **BEAR** | 0~39 | -20 | ❌ | 999 | penalty≥35 → 차단 |
+| **UNKNOWN** | N/A | -30 | ❌ | 999 | 데이터 부족 시 |
+
+---
+
+## 9. 빠른 청산 정책 방향 (Phase 6 구현 예정)
+
+```text
+- 고정 손절: -1.0% ~ -2.0%
+- 1차 익절: +1.0% ~ +2.0%
+- 트레일링 스탑: 고점 대비 -0.5% ~ -1.2%
+- 시간 손절: 진입 후 10~30분 내 상승 실패 시 정리
+- 급락 감지 청산
+- 체결강도 약화 청산
+- 호가 매도벽/스프레드 악화 청산
+- 장 마감 전 청산 정책
+```
+
+**주의:** 불장이라고 손절폭을 넓히지 않음. 급등주라는 이유로 손절 기준 완화 금지.
+
+---
+
+## 10. Audit / Telegram 연결 요약
+
+### Audit Event Type (27종, Phase 3)
+
+```text
+SERVER_STARTED, SERVER_STOPPED
+KIS_API_CALLED, KIS_API_FAILED
+TRADING_DAY_CHECKED, MARKET_SESSION_EVALUATED, SESSION_STATE_CHANGED
+NEW_BUY_BLOCKED_BY_SESSION, SESSION_STATE_UNKNOWN
+MARKET_REGIME_EVALUATED
+SCAN_STARTED, SCAN_COMPLETED, CANDIDATE_DISCOVERED, CANDIDATE_EXCLUDED
+QUANT_EVALUATED
+STRATEGY_SIGNAL_CREATED
+RISK_APPROVED, RISK_REJECTED
+ORDER_INTENT_APPROVED, ORDER_SUBMITTED, ORDER_FAILED, ORDER_CANCELLED
+FILL_CONFIRMED, POSITION_SYNCED
+EOD_REPORT_CREATED
+EMERGENCY_STOP_ACTIVATED, EMERGENCY_STOP_RELEASED
+```
+
+### Telegram Notification (20종, Phase 3B)
+
+```text
+SERVER_STARTED .. EOD_REPORT_CREATED .. KIS_API_FAILED 포함 20종
+ORDER_SUBMITTED와 FILL_CONFIRMED는 구분되어 전송
+secret masking 적용
+실패해도 매매 흐름 중단 없음 (safe failure)
+```
+
+---
+
+## 11. 핵심 위험 경고
 
 ```text
 ⚠️ MockBroker (backend/broker/mock_broker.py)는 SAT3로 절대 이관 금지
@@ -198,4 +456,8 @@ SAT2는 Phase 0 검색 기준:
 ⚠️ Phase 7 이전에는 주문 관련 코드 일체 금지
 ⚠️ TDD 방식으로 각 Phase를 독립적으로 개발
 ⚠️ 각 Phase 완료 시 11항목 보고서 필수
+⚠️ ETF/ETN/ELW/REIT/SPAC/UNKNOWN 상품은 어떤 fallback도 허용하지 않음
+⚠️ 급등주라는 이유로 Risk Engine 우회 금지 (Phase 5B 정책)
+⚠️ KIS API source metadata 없이 종목명 패턴만으로 허용 판단 금지
+⚠️ 상품 유형 UNKNOWN인 종목은 절대 후보로 통과시키지 않음
 ```

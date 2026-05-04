@@ -224,7 +224,8 @@ Phase 1  : KIS API Gateway + Source Policy
 Phase 2  : Trading Session / Market Schedule Engine
 Phase 3  : Audit / Logging Engine
 Phase 4  : Market Regime Engine
-Phase 5  : Scanner + Quant Candidate Evaluation
+Phase 5  : KOSPI/KOSDAQ Common Stock Scanner + Quant Candidate Evaluation
+Phase 5B : KOSPI/KOSDAQ Multi-Scanner + Rapid Surge Strategy Policy
 Phase 6  : Strategy Engine + Risk Engine
 Phase 7  : Live Order Gate + Order/Fill/Portfolio Sync
 Phase 8  : EOD Daily Performance Report + Dashboard Adapter
@@ -287,4 +288,84 @@ Phase 9  : Integration Hardening + 안전성 검증 + 릴리즈 준비
 
 ```text
 01_PHASE_0_ARCHITECTURE_DOCS_ONLY.md
+```
+
+
+---
+
+### 2.3B KOSPI/KOSDAQ 보통주 제한 및 시장상태 기반 멀티 스캐너 원칙
+
+SAT3의 매매 대상은 **KOSPI/KOSDAQ 보통주**로 제한한다. 급등주 단타는 핵심 방향이지만, 급등주 단일 전략으로 고정하지 않는다. 승률과 수익률 개선을 위해 시장상태 기반 멀티 스캐너 구조를 사용한다.
+
+```text
+매매 허용:
+- KOSPI common stock
+- KOSDAQ common stock
+```
+
+```text
+Scanner 기본 제외:
+- ETF
+- ETN
+- ELW
+- REIT
+- SPAC
+- preferred stock / 우선주
+- warrant / 신주인수권
+- inverse product
+- leveraged product
+- management issue
+- investment warning/caution/risk issue
+- trading halt issue
+- delisting/administrative issue
+- product_type UNKNOWN
+- KOSPI/KOSDAQ 외 시장
+```
+
+Scanner는 단순 수집기가 아니라 **정량 조건 기반 후보 발굴기**다.
+
+```text
+Scanner 역할:
+- KIS API Gateway 기반 후보 데이터 수집
+- KOSPI/KOSDAQ 보통주 제한
+- 제외 상품 필터링
+- scanner_type별 정량 조건 적용
+- 후보 편입/탈락 사유 기록
+
+Scanner 금지:
+- 매수/매도 신호 생성
+- 주문 수량 계산
+- 손절/익절가 확정
+- Risk Engine 역할 수행
+```
+
+Phase 5 Scanner Type:
+
+```text
+RAPID_SURGE
+- 급등 초기 후보
+- 단기 등락률, 거래량 폭증, 체결강도, 호가 안정성 중심
+
+LIQUIDITY_MOMENTUM
+- 거래대금 상위 + 안정적 상승 모멘텀 후보
+- 체결 품질과 승률 보완 목적
+
+BREAKOUT
+- 당일 고점/전고점/신고가 근접 돌파 후보
+- BULL 또는 강한 NEUTRAL에서 적극 사용
+
+PULLBACK_REBOUND
+- 강한 종목의 눌림 후 재상승 후보
+- 추격매수 위험 완화와 승률 보완 목적
+```
+
+중요 원칙:
+
+```text
+상품 유형을 알 수 없으면 제외한다.
+ETF 여부는 KIS API source metadata를 기준으로 판단한다.
+Scanner PASS는 매수 신호가 아니다.
+Quant PASS도 매수 신호가 아니다.
+급등주라는 이유로 Risk Engine을 우회하지 않는다.
+급등주라는 이유로 손절 기준을 완화하지 않는다.
 ```
