@@ -114,18 +114,22 @@ ENDPOINT_CATALOG: list[KisEndpoint] = []
 for defs in _ENDPOINT_DEFS:
     name, category, path, method, tr_id, requires_auth, is_order, desc = defs
     ENDPOINT_CATALOG.append(KisEndpoint(
-        name=name,
-        category=category,
-        path=path,
-        method=method,
-        tr_id=tr_id,
-        requires_auth=requires_auth,
-        is_order_endpoint=is_order,
-        description=desc,
+        name=name, category=category, path=path, method=method,
+        tr_id=tr_id, requires_auth=requires_auth,
+        is_order_endpoint=is_order, description=desc,
     ))
 
 # name → KisEndpoint lookup
 _ENDPOINT_MAP: dict[str, KisEndpoint] = {ep.name: ep for ep in ENDPOINT_CATALOG}
+
+# 편의 alias
+_ENDPOINT_ALIASES = {
+    "domestic_stock_current_price": "inquire_price",
+    "domestic_stock_orderbook": "inquire_asking_price",
+    "domestic_holiday": "inquire_holiday",
+    "domestic_stock_basic_info": "inquire_stock_basic",
+    "domestic_stock_execution": "inquire_time_ccnl",
+}
 
 
 def get_endpoint(name: str) -> KisEndpoint:
@@ -140,7 +144,7 @@ def get_endpoint(name: str) -> KisEndpoint:
     Raises:
         EndpointNotFoundError: name을 찾을 수 없는 경우
     """
-    ep = _ENDPOINT_MAP.get(name)
+    ep = _ENDPOINT_MAP.get(name) or _ENDPOINT_MAP.get(_ENDPOINT_ALIASES.get(name, ""))
     if ep is None:
         raise EndpointNotFoundError(name)
     return ep

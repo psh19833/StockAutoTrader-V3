@@ -63,13 +63,13 @@ class TestClientOrderBlocking:
             client.get_json("/uapi/domestic-stock/v1/trading/order-cash")
 
     def test_non_order_endpoint_allowed(self):
-        transport = StubTransport(responses={"/uapi/price": {"output": {"prpr": "75000"}}})
+        transport = StubTransport(responses={"/uapi/domestic-stock/v1/quotations/inquire-price": {"output": {"prpr": "75000"}}})
         client = KisClient(
             base_url="https://test.com",
             transport=transport,
             app_key="test", app_secret="test",
         )
-        resp = client.get_json("/uapi/price")
+        resp = client.get_json("/uapi/domestic-stock/v1/quotations/inquire-price")
         assert resp.status_code == 200
 
     def test_post_order_blocked(self):
@@ -86,8 +86,8 @@ class TestClientOrderBlocking:
 class TestQueryFacade:
     def test_facade_exposes_read_only_apis(self):
         transport = StubTransport(responses={
-            "/uapi/price": {"output": {"stck_prpr": "75000"}},
-            "/uapi/stock-info": {"output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}},
+            "/uapi/domestic-stock/v1/quotations/inquire-price": {"output": {"stck_prpr": "75000"}},
+            "/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {"output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}},
         })
         client = KisClient(
             base_url="https://test.com", transport=transport,
@@ -146,7 +146,7 @@ class TestErrorHandling:
             base_url="https://test.com", transport=transport,
             app_key="test", app_secret="test",
         )
-        resp = client.get_json("/uapi/price")
+        resp = client.get_json("/uapi/domestic-stock/v1/quotations/inquire-price")
         assert resp.status_code == 500
 
 

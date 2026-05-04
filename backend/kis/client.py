@@ -65,20 +65,41 @@ class KisClient:
 
     def get_json(self, path: str, params: dict | None = None):
         self._check_order_endpoint(path)
+        # Endpoint catalog resolution
+        ep_path, ep_tr_id = self._resolve_endpoint(path)
         if self._transport is None:
             from kis.transport import TransportResponse
             return TransportResponse(404, {"error": "no_transport"})
         headers = self._auth_headers()
-        return self._transport.get_json(path, params, headers=headers)
+        if ep_tr_id:
+            headers["tr_id"] = ep_tr_id
+        return self._transport.get_json(ep_path or path, params, headers=headers)
 
     def post_json(self, path: str, json_data: dict | None = None):
         self._check_order_endpoint(path)
+        ep_path, ep_tr_id = self._resolve_endpoint(path)
         if self._transport is None:
             from kis.transport import TransportResponse
             return TransportResponse(404, {"error": "no_transport"})
         headers = self._auth_headers()
         headers["content-type"] = "application/json"
-        return self._transport.post_json(path, json_data, headers=headers)
+        if ep_tr_id:
+            headers["tr_id"] = ep_tr_id
+        return self._transport.post_json(ep_path or path, json_data, headers=headers)
+
+    def _resolve_endpoint(self, name_or_path: str) -> tuple[str | None, str | None]:
+        """endpoint name이면 path/TR_ID 반환, path면 그대로"""
+        from kis.endpoints import get_endpoint, EndpointNotFoundError
+        try:
+            ep = get_endpoint(name_or_path)
+            if ep.is_order_endpoint:
+                from kis.errors import OrderEndpointBlockedError
+                raise OrderEndpointBlockedError(f"Order endpoint blocked: {name_or_path}")
+            return ep.path, ep.tr_id
+        except EndpointNotFoundError:
+            return None, None
+        except OrderEndpointBlockedError:
+            raise
 
     def _auth_headers(self) -> dict[str, str]:
         """KIS 인증 헤더 구성 (token + appkey + appsecret)"""

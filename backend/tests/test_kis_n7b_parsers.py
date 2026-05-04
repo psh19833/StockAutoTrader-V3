@@ -11,7 +11,7 @@ class TestMarketScheduleParser:
     def test_output_structure(self):
         from kis.market_schedule_api import MarketScheduleApi
         t = StubTransport(responses={
-            "/uapi/domestic-stock/v1/quotations/market-status": {
+            "/uapi/domestic-stock/v1/quotations/inquire-holiday": {
                 "rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상",
                 "output": {"market_status": "OPEN"}
             }
@@ -23,7 +23,7 @@ class TestMarketScheduleParser:
     def test_output1_structure(self):
         from kis.market_schedule_api import MarketScheduleApi
         t = StubTransport(responses={
-            "/uapi/domestic-stock/v1/quotations/market-status": {
+            "/uapi/domestic-stock/v1/quotations/inquire-holiday": {
                 "output1": {"stck_mrkt_cls_cd": "01"}  # 정규장
             }
         })
@@ -34,7 +34,7 @@ class TestMarketScheduleParser:
     def test_holidays_output_structure(self):
         from kis.market_schedule_api import MarketScheduleApi
         t = StubTransport(responses={
-            "/uapi/domestic-stock/v1/quotations/chk-holiday": {
+            "/uapi/domestic-stock/v1/quotations/inquire-holiday": {
                 "rt_cd": "0",
                 "output": [{"bass_dt": "20260505"}]
             }
@@ -50,7 +50,7 @@ class TestMarketDataParser:
     def test_price_output_structure(self):
         from kis.market_data_api import MarketDataApi
         t = StubTransport(responses={
-            "/uapi/price": {
+            "/uapi/domestic-stock/v1/quotations/inquire-price": {
                 "rt_cd": "0",
                 "output": {"stck_prpr": "75000", "stck_oprc": "74000",
                            "stck_hgpr": "76000", "stck_lwpr": "73500"}
@@ -64,7 +64,7 @@ class TestMarketDataParser:
         """output 키 없으면 DataUnavailable"""
         from kis.market_data_api import MarketDataApi
         t = StubTransport(responses={
-            "/uapi/price": {"rt_cd": "1", "msg1": "조회 결과 없음"}
+            "/uapi/domestic-stock/v1/quotations/inquire-price": {"rt_cd": "1", "msg1": "조회 결과 없음"}
         })
         api = MarketDataApi(transport=t, base_url="https://test.com")
         result = api.get_current_price("005930")
@@ -74,7 +74,7 @@ class TestMarketDataParser:
         """필드 누락 시 임의 가격 생성 금지"""
         from kis.market_data_api import MarketDataApi
         t = StubTransport(responses={
-            "/uapi/price": {"output": {"some_key": "value"}}
+            "/uapi/domestic-stock/v1/quotations/inquire-price": {"output": {"some_key": "value"}}
         })
         api = MarketDataApi(transport=t, base_url="https://test.com")
         result = api.get_current_price("005930")
@@ -87,7 +87,7 @@ class TestStockInfoParser:
     def test_output_structure(self):
         from kis.stock_info_api import StockInfoApi
         t = StubTransport(responses={
-            "/uapi/stock-info": {
+            "/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
                 "rt_cd": "0",
                 "output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}
             }
@@ -101,7 +101,7 @@ class TestStockInfoParser:
         """알 수 없는 상품 유형 → UNKNOWN"""
         from kis.stock_info_api import StockInfoApi
         t = StubTransport(responses={
-            "/uapi/stock-info": {
+            "/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
                 "output": {"market": "KOSPI", "product_type": "SOME_NEW_TYPE"}
             }
         })

@@ -10,7 +10,7 @@ def _make_stub(**overrides):
 
 class TestStockInfoApi:
     def test_kospi_common_stock(self):
-        t = _make_stub(**{"/uapi/stock-info": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
             "output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}
         }})
         api = StockInfoApi(transport=t, base_url="https://test.com")
@@ -19,7 +19,7 @@ class TestStockInfoApi:
         assert result["product_type"] == "COMMON_STOCK"
 
     def test_kosdaq_common_stock(self):
-        t = _make_stub(**{"/uapi/stock-info": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
             "output": {"market": "KOSDAQ", "product_type": "COMMON_STOCK"}
         }})
         api = StockInfoApi(transport=t, base_url="https://test.com")
@@ -27,7 +27,7 @@ class TestStockInfoApi:
         assert result["market"] == "KOSDAQ"
 
     def test_etf_excluded(self):
-        t = _make_stub(**{"/uapi/stock-info": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
             "output": {"market": "KOSPI", "product_type": "ETF"}
         }})
         api = StockInfoApi(transport=t, base_url="https://test.com")
@@ -35,7 +35,7 @@ class TestStockInfoApi:
         assert result["product_type"] == "ETF"
 
     def test_unknown_excluded(self):
-        t = _make_stub(**{"/uapi/stock-info": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
             "output": {"market": "KOSPI", "product_type": "UNKNOWN"}
         }})
         api = StockInfoApi(transport=t, base_url="https://test.com")
@@ -43,7 +43,7 @@ class TestStockInfoApi:
         assert result["product_type"] == "UNKNOWN"
 
     def test_management_issue_flag(self):
-        t = _make_stub(**{"/uapi/stock-info": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
             "output": {"market": "KOSPI", "product_type": "COMMON_STOCK",
                        "is_management_issue": True}
         }})
@@ -52,7 +52,7 @@ class TestStockInfoApi:
         assert result["is_management_issue"] is True
 
     def test_source_metadata(self):
-        t = _make_stub(**{"/uapi/stock-info": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {
             "output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}
         }})
         api = StockInfoApi(transport=t, base_url="https://test.com")
@@ -71,7 +71,7 @@ class TestStockInfoApi:
 from kis.account_api import AccountApi
 
 STUB_BALANCE = {
-    "/uapi/balance": {
+    "/uapi/domestic-stock/v1/trading/inquire-balance": {
         "output": [
             {"pdno": "005930", "hldg_qty": "10", "pchs_avg_pric": "74000",
              "prpr": "75000"},
@@ -81,7 +81,7 @@ STUB_BALANCE = {
 }
 
 STUB_FILLS = {
-    "/uapi/fills": {
+    "/uapi/domestic-stock/v1/trading/inquire-ccnl": {
         "output": [
             {"odno": "ord_001", "pdno": "005930", "sll_buy_dvsn_cd": "02",
              "tot_ccld_qty": "10", "tot_ccld_amt": "750000",
@@ -109,7 +109,7 @@ class TestAccountApi:
         assert result[0]["filled_qty"] == 10
 
     def test_fill_has_remaining_qty(self):
-        t = _make_stub(**{"/uapi/fills": {
+        t = _make_stub(**{"/uapi/domestic-stock/v1/trading/inquire-ccnl": {
             "output": [{"odno": "ord_001", "pdno": "005930",
                         "sll_buy_dvsn_cd": "02", "tot_ccld_qty": "5",
                         "tot_ccld_amt": "375000", "rmn_qty": "5"}]

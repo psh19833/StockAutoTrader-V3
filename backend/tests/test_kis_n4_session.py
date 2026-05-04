@@ -15,9 +15,9 @@ from session.session_state import TradingSessionState
 def _make_stub(holidays_response=None, status_response=None):
     responses = {}
     if holidays_response is not None:
-        responses["/uapi/domestic-stock/v1/quotations/chk-holiday"] = holidays_response
+        responses["/uapi/domestic-stock/v1/quotations/inquire-holiday"] = holidays_response
     if status_response is not None:
-        responses["/uapi/domestic-stock/v1/quotations/market-status"] = status_response
+        responses["/uapi/domestic-stock/v1/quotations/inquire-holiday"] = status_response
     return StubTransport(responses=responses)
 
 

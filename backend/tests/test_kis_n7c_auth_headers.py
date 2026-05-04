@@ -92,7 +92,7 @@ class TestApiClassesUseClient:
         from datetime import datetime, timezone
 
         t = StubTransport(responses={
-            "/uapi/price": {"output": {"stck_prpr": "75000"}}
+            "/uapi/domestic-stock/v1/quotations/inquire-price": {"output": {"stck_prpr": "75000"}}
         })
         client = KisClient(base_url="https://test.com", transport=t,
                            app_key="tk", app_secret="ts")
@@ -110,7 +110,7 @@ class TestApiClassesUseClient:
         from datetime import datetime, timezone
 
         t = StubTransport(responses={
-            "/uapi/stock-info": {"output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}}
+            "/uapi/domestic-stock/v1/quotations/inquire-stock-basic-info": {"output": {"market": "KOSPI", "product_type": "COMMON_STOCK"}}
         })
         client = KisClient(base_url="https://test.com", transport=t,
                            app_key="tk", app_secret="ts")
@@ -127,7 +127,7 @@ class TestApiClassesUseClient:
         from datetime import datetime, timezone
 
         t = StubTransport(responses={
-            "/uapi/price": {"output": {"stck_prpr": "75000"}},
+            "/uapi/domestic-stock/v1/quotations/inquire-price": {"output": {"stck_prpr": "75000"}},
         })
         client = KisClient(base_url="https://test.com", transport=t,
                            app_key="tk", app_secret="ts")

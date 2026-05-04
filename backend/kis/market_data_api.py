@@ -2,6 +2,10 @@
 from __future__ import annotations
 from kis.transport import KisTransport, StubTransport
 
+_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
+_ORDERBOOK_PATH = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+_EXEC_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-ccnl"
+
 
 class MarketDataApi:
     def __init__(self, transport=None, base_url: str = "", client=None):
@@ -9,11 +13,11 @@ class MarketDataApi:
         self._base_url = base_url
         self._client = client
 
-    def _get(self, path: str) -> dict:
+    def _get(self, endpoint_name: str, fallback_path: str, params: dict | None = None) -> dict:
         if self._client:
-            resp = self._client.get_json(path)
+            resp = self._client.get_json(endpoint_name, params=params)
         elif self._transport:
-            resp = self._transport.get_json(path)
+            resp = self._transport.get_json(fallback_path)
         else:
             return {}
         if resp.status_code != 200:
@@ -24,7 +28,8 @@ class MarketDataApi:
         return {}
 
     def get_current_price(self, symbol: str) -> dict:
-        out = self._get("/uapi/price")
+        out = self._get("domestic_stock_current_price", _PRICE_PATH,
+                        params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol})
         if not out:
             return {"symbol": symbol, "data_available": False,
                     "source": "KIS_API", "source_endpoints": ()}
@@ -34,17 +39,16 @@ class MarketDataApi:
             if k in out:
                 price = _int(out[k])
                 break
-        return {
-            "symbol": symbol, "current_price": price,
-            "open_price": _int(out.get("stck_oprc", out.get("oprc", 0))),
-            "high_price": _int(out.get("stck_hgpr", out.get("hgpr", 0))),
-            "low_price": _int(out.get("stck_lwpr", out.get("lwpr", 0))),
-            "source": "KIS_API", "source_endpoints": ("kis/price",),
-            "data_available": True,
-        }
+        return {"symbol": symbol, "current_price": price,
+                "open_price": _int(out.get("stck_oprc", out.get("oprc", 0))),
+                "high_price": _int(out.get("stck_hgpr", out.get("hgpr", 0))),
+                "low_price": _int(out.get("stck_lwpr", out.get("lwpr", 0))),
+                "source": "KIS_API", "source_endpoints": ("kis/price",),
+                "data_available": True}
 
     def get_orderbook(self, symbol: str) -> dict:
-        out = self._get("/uapi/orderbook")
+        out = self._get("domestic_stock_orderbook", _ORDERBOOK_PATH,
+                        params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol})
         if not out:
             return {"symbol": symbol, "data_available": False, "source": "KIS_API", "source_endpoints": ()}
         return {"symbol": symbol,
@@ -54,7 +58,8 @@ class MarketDataApi:
                 "data_available": True}
 
     def get_execution_strength(self, symbol: str) -> dict:
-        out = self._get("/uapi/execution")
+        out = self._get("domestic_stock_execution", _EXEC_PATH,
+                        params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol})
         if not out:
             return {"symbol": symbol, "data_available": False, "source": "KIS_API", "source_endpoints": ()}
         return {"symbol": symbol,
