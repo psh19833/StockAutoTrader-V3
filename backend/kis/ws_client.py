@@ -10,6 +10,7 @@ ConnectionStatus는 별도 모델(WebSocketConnectionStatus)로 Dashboard에서 
 
 from __future__ import annotations
 
+import json
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -17,6 +18,11 @@ from enum import Enum
 from typing import Optional
 
 from kis.ws_models import WebSocketMessageBase, WebSocketConnectionStatus
+from kis.ws_subscription import (
+    build_subscribe_payload,
+    build_unsubscribe_payload,
+    MASKED_APPROVAL_KEY,
+)
 
 
 # ── Reconnect Config ─────────────────────────────────────────────────────────
@@ -180,6 +186,11 @@ class GuardedRealWebSocketClient(WebSocketClient):
       - approval_key 발급 완료
       - KIS WebSocket endpoint URL 설정
       - 주문 endpoint 차단 유지
+
+    N8-B:
+      - build_subscribe_payload / build_unsubscribe_payload 추가
+      - get_subscribe_payload_masked: display/log 용 마스킹 버전
+      - _store_approval_key: 내부 저장 (repr 미노출)
     """
 
     def __init__(self, reconnect_config: Optional[ReconnectConfig] = None):
@@ -190,6 +201,37 @@ class GuardedRealWebSocketClient(WebSocketClient):
         self._reconnect_count = 0
         self._last_error_type: Optional[str] = None
         self._data_quality_warnings: list[str] = []
+        self._approval_key: Optional[str] = None
+        self._base_url: str = ""
+
+    def _store_approval_key(self, approval_key: str) -> None:
+        """Store approval_key internally (never exposed in repr/log)."""
+        self._approval_key = approval_key
+
+    def build_subscribe_payload(self, tr_id: str, symbol: str,
+                                 approval_key: str) -> dict:
+        """Build wire-level subscribe payload.
+
+        approval_key is included in the returned dict for actual
+        WebSocket transmission. Use get_subscribe_payload_masked()
+        for display/log output.
+        """
+        return build_subscribe_payload(tr_id, symbol, approval_key)
+
+    def build_unsubscribe_payload(self, tr_id: str, symbol: str,
+                                   approval_key: str) -> dict:
+        """Build wire-level unsubscribe payload."""
+        return build_unsubscribe_payload(tr_id, symbol, approval_key)
+
+    def get_subscribe_payload_masked(self, tr_id: str, symbol: str,
+                                      approval_key: str) -> str:
+        """Return subscribe payload as JSON string with approval_key masked.
+
+        Safe for display/log output.
+        """
+        payload = build_subscribe_payload(tr_id, symbol, approval_key)
+        payload["header"]["approval_key"] = MASKED_APPROVAL_KEY
+        return json.dumps(payload, indent=2, ensure_ascii=False)
 
     def connect(self, approval_key: str = "", base_url: str = "") -> None:
         """Reserved for production WebSocket connection.
@@ -200,6 +242,13 @@ class GuardedRealWebSocketClient(WebSocketClient):
         raise NotImplementedError(
             "Real KIS WebSocket connection is not yet implemented. "
             "Use StubWebSocketClient for testing."
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"GuardedRealWebSocketClient("
+            f"state={self._connection_state.value}, "
+            f"subscribed={list(self._subscribed.keys())})"
         )
 
     def disconnect(self) -> None:
