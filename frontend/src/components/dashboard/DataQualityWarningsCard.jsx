@@ -1,0 +1,11 @@
+import React from "react";
+
+export default function DataQualityWarningsCard({ warnings }) {
+  if (!warnings || warnings.length === 0) return null;
+  return (
+    <div className="card warn">
+      <h3>Data Quality Warnings</h3>
+      <ul>{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+    </div>
+  );
+}
