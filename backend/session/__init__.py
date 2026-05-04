@@ -1,0 +1,1 @@
+"""SAT3 Session Engine — Trading Session, Calendar, Guard, Policy"""
