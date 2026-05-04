@@ -75,7 +75,7 @@ class TestConnectionStateTransitions:
 
     def test_connect_still_raises(self):
         client = GuardedRealWebSocketClient()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ValueError):
             client.connect()
 
     def test_disconnect_from_connected(self):
@@ -135,5 +135,5 @@ class TestRealWsModeGuard:
 
     def test_real_ws_flagged_still_raises_not_implemented(self):
         """With --real-ws, connect still raises NotImplementedError (skeleton)."""
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ValueError):
             GuardedRealWebSocketClient().connect()

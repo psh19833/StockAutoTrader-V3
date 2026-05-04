@@ -61,8 +61,8 @@ class TestSmokeScriptStubMode:
     def test_stub_mode_no_real_ws_connect(self):
         """Stub mode must never call real WebSocket connect."""
         from kis.ws_client import GuardedRealWebSocketClient
-        # Guarded client connect raises NotImplementedError
-        with pytest.raises(NotImplementedError):
+        # Guarded client connect requires approval_key
+        with pytest.raises(ValueError):
             GuardedRealWebSocketClient().connect()
 
 

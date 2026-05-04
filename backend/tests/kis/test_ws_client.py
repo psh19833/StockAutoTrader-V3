@@ -198,10 +198,7 @@ class TestGuardedRealWebSocketClient:
         assert hasattr(client, "get_status")
 
     def test_skeleton_connect_raises(self):
-        """Real client not connected to KIS — should raise NotImplementedError."""
+        """Real client requires approval_key — raises ValueError without it."""
         client = GuardedRealWebSocketClient()
-        with pytest.raises(NotImplementedError):
-            client.connect(
-                approval_key="mock-key",
-                base_url="ws://mock",
-            )
+        with pytest.raises(ValueError):
+            client.connect()  # no approval_key

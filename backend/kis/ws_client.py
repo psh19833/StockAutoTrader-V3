@@ -15,7 +15,7 @@ import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from kis.ws_models import WebSocketMessageBase, WebSocketConnectionStatus
 from kis.ws_subscription import (
@@ -177,20 +177,20 @@ class StubWebSocketClient(WebSocketClient):
 # ── GuardedRealWebSocketClient (production skeleton) ─────────────────────────
 
 class GuardedRealWebSocketClient(WebSocketClient):
-    """Production WebSocket client skeleton.
+    """Production WebSocket client with real KIS connection.
 
-    현재는 구조만 정의되어 있으며, 실제 KIS WebSocket 연결은
-    추후 활성화된다. connect() 호출 시 NotImplementedError 발생.
+    Uses websocket-client library for actual WebSocket communication.
+    Tested only via mock — never in automated tests.
 
     활성화 조건:
       - approval_key 발급 완료
       - KIS WebSocket endpoint URL 설정
       - 주문 endpoint 차단 유지
 
-    N8-B:
-      - build_subscribe_payload / build_unsubscribe_payload 추가
-      - get_subscribe_payload_masked: display/log 용 마스킹 버전
-      - _store_approval_key: 내부 저장 (repr 미노출)
+    Security:
+      - approval_key is never exposed in repr/str/log
+      - WebSocket URL is never exposed in repr/str/log
+      - subscribe payload is masked when displayed
     """
 
     def __init__(self, reconnect_config: Optional[ReconnectConfig] = None):
@@ -203,69 +203,97 @@ class GuardedRealWebSocketClient(WebSocketClient):
         self._data_quality_warnings: list[str] = []
         self._approval_key: Optional[str] = None
         self._base_url: str = ""
+        self._ws: Any = None  # websocket connection object
 
     def _store_approval_key(self, approval_key: str) -> None:
         """Store approval_key internally (never exposed in repr/log)."""
         self._approval_key = approval_key
 
     def _heartbeat(self) -> None:
-        """Update last_message_at for keep-alive tracking.
-
-        Only updates when in CONNECTED state.
-        """
+        """Update last_message_at for keep-alive tracking."""
         if self._connection_state == ConnectionState.CONNECTED:
             self._last_message_at = datetime.now(timezone.utc)
 
     def build_subscribe_payload(self, tr_id: str, symbol: str,
                                  approval_key: str) -> dict:
-        """Build wire-level subscribe payload.
-
-        approval_key is included in the returned dict for actual
-        WebSocket transmission. Use get_subscribe_payload_masked()
-        for display/log output.
-        """
         return build_subscribe_payload(tr_id, symbol, approval_key)
 
     def build_unsubscribe_payload(self, tr_id: str, symbol: str,
                                    approval_key: str) -> dict:
-        """Build wire-level unsubscribe payload."""
         return build_unsubscribe_payload(tr_id, symbol, approval_key)
 
     def get_subscribe_payload_masked(self, tr_id: str, symbol: str,
                                       approval_key: str) -> str:
-        """Return subscribe payload as JSON string with approval_key masked.
-
-        Safe for display/log output.
-        """
         payload = build_subscribe_payload(tr_id, symbol, approval_key)
         payload["header"]["approval_key"] = MASKED_APPROVAL_KEY
         return json.dumps(payload, indent=2, ensure_ascii=False)
 
     def connect(self, approval_key: str = "", base_url: str = "") -> None:
-        """Reserved for production WebSocket connection.
+        """Establish real KIS WebSocket connection.
+
+        Uses websocket-client library. Requires valid approval_key
+        and KIS WebSocket endpoint URL.
+
+        Args:
+            approval_key: Real approval_key from WsApprovalKey
+            base_url: KIS WebSocket endpoint URL (e.g., ws://...)
 
         Raises:
-            NotImplementedError: 아직 실제 연결 구현 전.
+            ValueError: if approval_key is empty
+            ConnectionError: if WebSocket connection fails
         """
-        raise NotImplementedError(
-            "Real KIS WebSocket connection is not yet implemented. "
-            "Use StubWebSocketClient for testing."
-        )
+        if not approval_key:
+            raise ValueError("approval_key is required for real WebSocket connection")
 
-    def __repr__(self) -> str:
-        return (
-            f"GuardedRealWebSocketClient("
-            f"state={self._connection_state.value}, "
-            f"subscribed={list(self._subscribed.keys())})"
-        )
+        self._approval_key = approval_key
+        self._base_url = base_url
+        self._connection_state = ConnectionState.CONNECTING
+
+        try:
+            import websocket
+            self._ws = websocket.create_connection(base_url, timeout=10)
+            self._connection_state = ConnectionState.CONNECTED
+            self._last_message_at = datetime.now(timezone.utc)
+        except Exception as e:
+            self._connection_state = ConnectionState.ERROR
+            self._last_error_type = type(e).__name__
+            raise ConnectionError(f"WebSocket connect failed: {e}") from e
 
     def disconnect(self) -> None:
+        """Close WebSocket connection and reset state."""
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
         self._connection_state = ConnectionState.DISCONNECTED
+        self._subscribed.clear()
 
     def subscribe(self, tr_id: str, symbol: str) -> None:
+        """Subscribe to a real-time channel via WebSocket."""
+        if self._connection_state != ConnectionState.CONNECTED or not self._ws:
+            raise RuntimeError(
+                f"Cannot subscribe: client is {self._connection_state.value}"
+            )
+        payload = build_subscribe_payload(tr_id, symbol, self._approval_key or "")
+        message = json.dumps(payload)
+        self._ws.send(message)
         self._subscribed[tr_id] = symbol
+        self._last_message_at = datetime.now(timezone.utc)
 
     def unsubscribe(self, tr_id: str) -> None:
+        """Unsubscribe from a real-time channel via WebSocket."""
+        if tr_id not in self._subscribed:
+            return
+        symbol = self._subscribed[tr_id]
+        if self._connection_state == ConnectionState.CONNECTED and self._ws:
+            payload = build_unsubscribe_payload(tr_id, symbol, self._approval_key or "")
+            message = json.dumps(payload)
+            try:
+                self._ws.send(message)
+            except Exception:
+                pass
         self._subscribed.pop(tr_id, None)
 
     def get_status(self) -> WebSocketConnectionStatus:
@@ -276,4 +304,11 @@ class GuardedRealWebSocketClient(WebSocketClient):
             reconnect_count=self._reconnect_count,
             last_error_type=self._last_error_type,
             data_quality_warnings=list(self._data_quality_warnings),
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"GuardedRealWebSocketClient("
+            f"state={self._connection_state.value}, "
+            f"subscribed={list(self._subscribed.keys())})"
         )

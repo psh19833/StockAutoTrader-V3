@@ -23,9 +23,9 @@ class TestGuardedRealWSClientExtensions:
         assert payload["header"]["tr_type"] == "2"
 
     def test_connect_still_raises_not_implemented(self):
-        """connect() is still NotImplementedError in N8-B."""
+        """connect() requires approval_key."""
         client = GuardedRealWebSocketClient()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ValueError):
             client.connect()
 
     def test_get_subscribe_payload_masked_for_display(self):

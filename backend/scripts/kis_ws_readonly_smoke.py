@@ -175,12 +175,12 @@ def main():
         help="Use GuardedRealWebSocketClient (attempts real connection)"
     )
     parser.add_argument(
-        "--duration", type=int, default=0,
-        help="Max duration in seconds (0 = no limit)"
+        "--duration", type=int, default=30,
+        help="Max duration in seconds (default: 30)"
     )
     parser.add_argument(
-        "--max-messages", type=int, default=0,
-        help="Max messages to receive (0 = no limit)"
+        "--max-messages", type=int, default=10,
+        help="Max messages to receive (default: 10)"
     )
     args = parser.parse_args()
 
@@ -227,15 +227,20 @@ def main():
         print(f"[INFO] Stub approval_key: {MASKED_APPROVAL_KEY}")
 
     # ── Connect ───────────────────────────────────────────────────────────
-    try:
+    ws_url = os.getenv("KIS_WEBSOCKET_URL", "")
+    if args.real_ws:
+        if not ws_url:
+            print("[FAIL] KIS_WEBSOCKET_URL not set in .env")
+            sys.exit(1)
+        try:
+            client.connect(approval_key=approval_key, base_url=ws_url)
+            print("[OK] WebSocket connected")
+        except ConnectionError as e:
+            print(f"[FAIL] WebSocket connection failed: {e}")
+            sys.exit(1)
+    else:
         client.connect()
-        print("[OK] WebSocket connected")
-    except NotImplementedError:
-        if args.real_ws:
-            print("[INFO] GuardedRealWebSocketClient: connect() not yet implemented")
-            print("[INFO] Would connect to KIS WebSocket with approval_key")
-        else:
-            raise
+        print("[OK] WebSocket connected (stub)")
 
     # ── Subscribe to channels ─────────────────────────────────────────────
     print(f"\n[INFO] Subscribing to {len(channel_names)} channel(s): {channel_names}")
