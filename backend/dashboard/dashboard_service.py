@@ -17,7 +17,7 @@ from dashboard.dashboard_models import (
 
 
 class DashboardService:
-    """대시보드 데이터 서비스 — InMemory 저장소 기반"""
+    """대시보드 데이터 서비스 — InMemory 저장소 기반 + Repository 주입"""
 
     def __init__(self):
         self._candidates: list[ScannerCandidateView] = []
@@ -28,6 +28,7 @@ class DashboardService:
         self._fills: list[FillStatusView] = []
         self._portfolio: list[PortfolioView] = []
         self._audit_events: list[AuditTimelineView] = []
+        self._audit_repo = None
 
     # ── 데이터 주입 (Stub 용) ──
 
@@ -39,6 +40,11 @@ class DashboardService:
 
     def inject_audit_events(self, items: list[AuditTimelineView]) -> None:
         self._audit_events = items
+
+    # ── Repository 주입 (DB 연결) ──
+
+    def set_audit_repository(self, repo) -> None:
+        self._audit_repo = repo
 
     # ── 조회 ──
 
