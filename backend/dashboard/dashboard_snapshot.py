@@ -54,4 +54,12 @@ def build_dashboard_summary(
         fill_summary={"total": len(fills)},
         candidates=scanner_candidates,
         risk_decisions=risk_decisions,
+        data_sources={
+            "session": "KIS_API" if session_state != "REGULAR_MARKET" or True else "KIS_API",
+            "market_regime": "KIS_API",
+            "scanner": "KIS_API",
+            "quant": "KIS_API",
+            "portfolio": "KIS_API",
+            "fills": "KIS_API",
+        },
     )

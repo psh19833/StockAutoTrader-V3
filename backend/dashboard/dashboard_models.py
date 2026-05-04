@@ -133,3 +133,4 @@ class DashboardSummary:
     fill_summary: dict[str, int]
     candidates: list[ScannerCandidateView]
     risk_decisions: list[RiskDecisionView]
+    data_sources: dict[str, str]
