@@ -101,7 +101,7 @@ def run_scanner(
                     reason = None
                     discovered_reason = [f"{scanner_type.value}:conditions_met"]
                 else:
-                    reason = ExclusionReason.SCANNER_CONDITION_NOT_MET.value
+                    reason = scanner_result.reason if scanner_result.reason else ExclusionReason.SCANNER_CONDITION_NOT_MET.value
 
         # Aggregate source_endpoints
         if "source_endpoints" in stock:

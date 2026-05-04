@@ -91,7 +91,7 @@ class TestRunScannerSingle:
         stock["intraday_change_rate"] = 0.5  # below min_surge_rate 2.0
         result = run_scanner([stock], ScannerType.RAPID_SURGE, market_regime="BULL")
         assert result.included_count == 0
-        assert result.candidates[0].excluded_reason == ExclusionReason.SCANNER_CONDITION_NOT_MET.value
+        assert "surge_rate" in result.candidates[0].excluded_reason.lower()
 
     def test_liquidity_momentum_included(self):
         stocks = [_make_liquidity_stock()]
@@ -230,3 +230,61 @@ class TestRunAllScanners:
             forbidden = {"buy_signal", "sell_signal", "order_intent",
                          "quantity", "stop_loss", "take_profit", "order_id"}
             assert not (metrics_keys & forbidden)
+
+
+class TestScannerExcludedReasonPropagation:
+    """Scanner-specific filter 실패 사유가 excluded_reason에 보존되는지"""
+
+    def test_rapid_surge_vi_active_reason(self):
+        """RAPID_SURGE: VI_ACTIVE → excluded_reason에 VI 포함"""
+        stock = _make_rapid_surge_stock()
+        stock["vi_status"] = "ACTIVE"
+        result = run_scanner([stock], ScannerType.RAPID_SURGE, market_regime="BULL")
+        assert result.included_count == 0
+        assert result.excluded_count == 1
+        assert "VI" in result.candidates[0].excluded_reason.upper()
+
+    def test_rapid_surge_spread_too_wide_reason(self):
+        """RAPID_SURGE: spread 초과 → excluded_reason에 spread 포함"""
+        stock = _make_rapid_surge_stock()
+        stock["spread_rate"] = 5.0  # max_spread_rate is 1.0
+        result = run_scanner([stock], ScannerType.RAPID_SURGE, market_regime="BULL")
+        assert result.included_count == 0
+        assert "spread" in result.candidates[0].excluded_reason.lower()
+
+    def test_liquidity_momentum_trading_value_reason(self):
+        """LIQUIDITY_MOMENTUM: 거래대금 부족 → excluded_reason에 trading_value 포함"""
+        stock = _make_liquidity_stock()
+        stock["trading_value"] = 100_000  # far below 20B minimum
+        result = run_scanner([stock], ScannerType.LIQUIDITY_MOMENTUM, market_regime="NEUTRAL")
+        assert result.included_count == 0
+        assert "trading_value" in result.candidates[0].excluded_reason.lower()
+
+    def test_breakout_regime_not_allowed_reason(self):
+        """BREAKOUT: Market Regime 부적합 → excluded_reason에 market_regime 포함"""
+        stock = _make_stock(
+            symbol="035420", current_price=95000.0, intraday_high=100000.0,
+            recent_high_20d=100000.0, volume_ratio_vs_recent_avg=3.0,
+            trading_value=50_000_000_000, execution_strength=150.0,
+            market_regime="BEAR", spread_rate=0.1, volume=10_000_000,
+            is_trading_halted=False, is_management_issue=False,
+            is_investment_warning=False,
+        )
+        result = run_scanner([stock], ScannerType.BREAKOUT, market_regime="BEAR")
+        assert result.included_count == 0
+        assert "market_regime" in result.candidates[0].excluded_reason.lower()
+
+    def test_pullback_rebound_pullback_too_deep_reason(self):
+        """PULLBACK_REBOUND: 눌림 깊이 초과 → excluded_reason에 pullback 포함"""
+        stock = _make_stock(
+            symbol="035720", prior_intraday_gain=5.0,
+            pullback_from_high=10.0,  # far exceeds max_pullback_depth of 5.0
+            rebound_volume_ratio=2.0, support_holding_score=7.0,
+            spread_rate=0.2, trading_value=10_000_000_000,
+            current_price=50000.0, volume=5_000_000,
+            is_trading_halted=False, is_management_issue=False,
+            is_investment_warning=False,
+        )
+        result = run_scanner([stock], ScannerType.PULLBACK_REBOUND, market_regime="NEUTRAL")
+        assert result.included_count == 0
+        assert "pullback" in result.candidates[0].excluded_reason.lower()
