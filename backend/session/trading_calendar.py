@@ -80,6 +80,27 @@ class TradingCalendar:
         """
         return self._check_date(target)
 
+    def build_snapshot(self, holidays: list[str],
+                       source_endpoints: tuple[str, ...] = ()) -> TradingCalendarSnapshot:
+        """KIS 휴장일 목록으로 직접 스냅샷 생성 (테스트/운영용)"""
+        from datetime import date as dt_date
+        holiday_dates = tuple(
+            dt_date.fromisoformat(h) for h in holidays if len(h) == 8
+        )
+        today = dt_date.today()
+        is_hol = today in holiday_dates
+        is_weekend = today.weekday() >= 5
+        return TradingCalendarSnapshot(
+            reference_date=today,
+            is_trading_day=not is_hol and not is_weekend,
+            is_holiday=is_hol or is_weekend,
+            holidays=holiday_dates,
+            source_endpoints=source_endpoints,
+            api_checked_at=datetime.now(timezone.utc),
+            api_available=True,
+            reason="Holiday" if is_hol else ("Weekend" if is_weekend else "Trading day"),
+        )
+
     def _check_date(self, target: date) -> TradingCalendarSnapshot:
         """내부 날짜 확인 로직"""
         now = datetime.now(timezone.utc)

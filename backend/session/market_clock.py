@@ -189,3 +189,20 @@ class MarketClock:
 
         # 알 수 없는 상태 코드
         return TradingSessionState.SESSION_STATE_UNKNOWN
+
+    @staticmethod
+    def map_kis_status(kis_status: str, is_trading_day: bool = True) -> TradingSessionState:
+        """KIS 장운영정보 → TradingSessionState 매핑 (단축 코드 지원)"""
+        if not is_trading_day:
+            return TradingSessionState.CLOSED_HOLIDAY
+        status_map: dict[str, TradingSessionState] = {
+            "OPEN": TradingSessionState.REGULAR_MARKET,
+            "STATUS_OPEN": TradingSessionState.REGULAR_MARKET,
+            "PREOPEN": TradingSessionState.PRE_MARKET_AUCTION,
+            "STATUS_PREOPEN": TradingSessionState.PRE_MARKET_AUCTION,
+            "CLOSE": TradingSessionState.CLOSED_AFTER_MARKET,
+            "STATUS_CLOSE": TradingSessionState.CLOSED_AFTER_MARKET,
+            "STATUS_CLOSEAUCTION": TradingSessionState.CLOSING_AUCTION,
+            "STATUS_AFTERHOURS": TradingSessionState.AFTER_MARKET,
+        }
+        return status_map.get(kis_status, TradingSessionState.SESSION_STATE_UNKNOWN)
