@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 
@@ -122,6 +123,36 @@ class AuditTimelineView:
 
 
 @dataclass(frozen=True)
+class WebSocketStatusView:
+    """WebSocket 연결 상태 표시 (Read-Only).
+
+    Dashboard에서 WebSocket 상태를 조회하기 위한 View Model.
+    주문 버튼/주문 실행 필드는 절대 포함하지 않음.
+    """
+
+    connection_state: str = "DISCONNECTED"
+    subscribed_channels: list[str] = field(default_factory=list)
+    last_message_at: datetime | None = None
+    reconnect_count: int = 0
+    last_error_type: str | None = None
+    data_quality_warnings: list[str] = field(default_factory=list)
+    source: str = "KIS_API_WS"
+
+    @classmethod
+    def from_status(cls, status: Any) -> "WebSocketStatusView":
+        """Convert WebSocketConnectionStatus to a Dashboard view."""
+        return cls(
+            connection_state=status.connection_state,
+            subscribed_channels=list(status.subscribed_channels),
+            last_message_at=status.last_message_at,
+            reconnect_count=status.reconnect_count,
+            last_error_type=status.last_error_type,
+            data_quality_warnings=list(status.data_quality_warnings),
+            source=status.source,
+        )
+
+
+@dataclass(frozen=True)
 class DashboardSummary:
     system: SystemStatusView
     session: SessionStatusView
@@ -134,3 +165,4 @@ class DashboardSummary:
     candidates: list[ScannerCandidateView]
     risk_decisions: list[RiskDecisionView]
     data_sources: dict[str, str]
+    ws_status: WebSocketStatusView | None = None
