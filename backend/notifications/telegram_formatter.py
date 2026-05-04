@@ -301,10 +301,18 @@ def _format_risk_rejected(event: AuditEvent) -> TelegramEvent:
     if event.symbol:
         body += f"\n  종목: {event.symbol}"
     pl = event.payload or {}
-    if "risk_score" in pl:
-        body += f"\n  리스크 점수: {pl['risk_score']}"
-    if "reason" in pl:
-        body += f"\n  사유: {pl['reason']}"
+    if "reason_code" in pl:
+        body += f"\n  거절코드: {pl['reason_code']}"
+    if "reason_text" in pl:
+        body += f"\n  사유: {pl['reason_text']}"
+    if "market_regime" in pl:
+        body += f"\n  시장: {pl['market_regime']}"
+    if "session_state" in pl:
+        body += f"\n  세션: {pl['session_state']}"
+    if "failed_items" in pl:
+        failed = pl["failed_items"]
+        if isinstance(failed, list) and failed:
+            body += f"\n  실패항목: {', '.join(failed)}"
     body += _format_payload(pl)
     return TelegramEvent(
         event_type=TelegramEventType.RISK_REJECTED.value,
@@ -424,6 +432,66 @@ def _format_kis_api_failed(event: AuditEvent) -> TelegramEvent:
     )
 
 
+def _format_scan_started(event: AuditEvent) -> TelegramEvent:
+    title = "🔍 스캔 시작"
+    pl = event.payload or {}
+    body = "Scanner 실행이 시작되었습니다."
+    if "scanner_type" in pl:
+        body += f"\n  스캐너: {pl['scanner_type']}"
+    if "scan_run_id" in pl:
+        body += f"\n  실행ID: {pl['scan_run_id']}"
+    body += _format_payload(pl)
+    return TelegramEvent(
+        event_type=TelegramEventType.SCAN_STARTED.value,
+        title=title, body=body,
+        notification_severity=NotificationSeverity.LOW,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
+def _format_candidate_excluded(event: AuditEvent) -> TelegramEvent:
+    title = f"🚫 후보 제외 — {event.symbol or '(종목 미지정)'}"
+    pl = event.payload or {}
+    body = "Scanner 후보에서 제외되었습니다."
+    if event.symbol:
+        body += f"\n  종목: {event.symbol}"
+    if "excluded_reason" in pl:
+        body += f"\n  사유: {pl['excluded_reason']}"
+    if "scanner_type" in pl:
+        body += f"\n  스캐너: {pl['scanner_type']}"
+    body += _format_payload(pl)
+    return TelegramEvent(
+        event_type=TelegramEventType.CANDIDATE_EXCLUDED.value,
+        title=title, body=body,
+        notification_severity=NotificationSeverity.LOW,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
+def _format_quant_evaluated(event: AuditEvent) -> TelegramEvent:
+    title = f"📊 Quant 평가 — {event.symbol or '(종목 미지정)'}"
+    pl = event.payload or {}
+    body = "Quant 평가가 완료되었습니다."
+    if event.symbol:
+        body += f"\n  종목: {event.symbol}"
+    if "decision" in pl:
+        body += f"\n  판단: {pl['decision']}"
+    if "final_score" in pl:
+        body += f"\n  점수: {pl['final_score']}"
+    if "scanner_type" in pl:
+        body += f"\n  스캐너: {pl['scanner_type']}"
+    body += _format_payload(pl)
+    return TelegramEvent(
+        event_type=TelegramEventType.QUANT_EVALUATED.value,
+        title=title, body=body,
+        notification_severity=NotificationSeverity.LOW,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
 # Formatter 디스패치 맵
 _FORMATTER_MAP: dict[str, callable] = {
     "SERVER_STARTED": _format_server_started,
@@ -446,6 +514,9 @@ _FORMATTER_MAP: dict[str, callable] = {
     "EMERGENCY_STOP_ACTIVATED": _format_emergency_stop_activated,
     "EMERGENCY_STOP_RELEASED": _format_emergency_stop_released,
     "KIS_API_FAILED": _format_kis_api_failed,
+    "SCAN_STARTED": _format_scan_started,
+    "CANDIDATE_EXCLUDED": _format_candidate_excluded,
+    "QUANT_EVALUATED": _format_quant_evaluated,
 }
 
 

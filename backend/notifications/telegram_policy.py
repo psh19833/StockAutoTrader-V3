@@ -23,6 +23,8 @@ DEFAULT_ALLOWED_EVENT_TYPES: frozenset[str] = frozenset({
     "MARKET_REGIME_EVALUATED",
     "SCAN_COMPLETED",
     "CANDIDATE_DISCOVERED",
+    "CANDIDATE_EXCLUDED",
+    "QUANT_EVALUATED",
     "STRATEGY_SIGNAL_CREATED",
     "RISK_APPROVED",
     "RISK_REJECTED",
@@ -41,7 +43,6 @@ DEFAULT_BLOCKED_EVENT_TYPES: frozenset[str] = frozenset({
     "KIS_API_CALLED",
     "SERVER_STARTED",
     "SCAN_STARTED",
-    "QUANT_EVALUATED",
 })
 
 
@@ -69,6 +70,8 @@ DEFAULT_THROTTLING: tuple[ThrottlingPolicy, ...] = (
     ThrottlingPolicy(event_type="TRADING_DAY_CHECKED", max_count=1, window_seconds=600),
     ThrottlingPolicy(event_type="MARKET_SESSION_EVALUATED", max_count=1, window_seconds=300),
     ThrottlingPolicy(event_type="SCAN_COMPLETED", max_count=1, window_seconds=60),
+    ThrottlingPolicy(event_type="QUANT_EVALUATED", max_count=1, window_seconds=60),
+    ThrottlingPolicy(event_type="CANDIDATE_EXCLUDED", max_count=5, window_seconds=60),
 )
 
 

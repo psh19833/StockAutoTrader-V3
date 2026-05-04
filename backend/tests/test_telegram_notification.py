@@ -510,3 +510,118 @@ class TestTelegramNotifier:
         r2 = notifier.notify(event)
         assert r2 is None  # throttling
         assert sender.sent_count == 1
+
+
+# ── N3 New Event Tests ──
+
+class TestNewEventTypes:
+    """N3: CANDIDATE_EXCLUDED, QUANT_EVALUATED, SCAN_STARTED"""
+
+    def test_candidate_excluded_exists(self):
+        assert TelegramEventType.CANDIDATE_EXCLUDED.value == "CANDIDATE_EXCLUDED"
+
+    def test_quant_evaluated_exists(self):
+        assert TelegramEventType.QUANT_EVALUATED.value == "QUANT_EVALUATED"
+
+    def test_scan_started_exists(self):
+        assert TelegramEventType.SCAN_STARTED.value == "SCAN_STARTED"
+
+    def test_severity_maps_exist(self):
+        assert "CANDIDATE_EXCLUDED" in DEFAULT_SEVERITY_MAP
+        assert "QUANT_EVALUATED" in DEFAULT_SEVERITY_MAP
+        assert "SCAN_STARTED" in DEFAULT_SEVERITY_MAP
+
+
+class TestNewFormatters:
+    """N3: formatter for new event types"""
+
+    def test_candidate_excluded_format(self):
+        event = _make_event("CANDIDATE_EXCLUDED", symbol="999999",
+                            payload={"excluded_reason": "ETF_EXCLUDED",
+                                     "scanner_type": "RAPID_SURGE",
+                                     "symbol": "999999"})
+        te = format_audit_event(event)
+        assert "ETF" in te.body or "ETF" in te.title.upper()
+
+    def test_quant_evaluated_format(self):
+        event = _make_event("QUANT_EVALUATED", symbol="005930",
+                            payload={"decision": "PASS", "final_score": 85.0,
+                                     "symbol": "005930",
+                                     "scanner_type": "RAPID_SURGE"})
+        te = format_audit_event(event)
+        assert "PASS" in te.body or "85" in te.body
+
+    def test_scan_started_format(self):
+        event = _make_event("SCAN_STARTED",
+                            payload={"scanner_type": "RAPID_SURGE",
+                                     "scan_run_id": "scan_001"})
+        te = format_audit_event(event)
+        assert "SCAN" in te.title.upper() or "스캔" in te.title
+
+
+class TestRiskRejectedEnhanced:
+    """N3: RISK_REJECTED 상세 메시지 강화"""
+
+    def test_risk_rejected_includes_reason_code(self):
+        event = _make_event("RISK_REJECTED", symbol="005930",
+                            payload={"reason_code": "MARKET_REGIME_BLOCKED",
+                                     "reason_text": "Market regime blocks new buys",
+                                     "failed_items": ["market_regime"],
+                                     "checked_items": ["live_trading", "market_regime"],
+                                     "market_regime": "BEAR",
+                                     "session_state": "REGULAR_MARKET"})
+        te = format_audit_event(event)
+        assert "MARKET_REGIME_BLOCKED" in te.body or "BEAR" in te.body
+
+    def test_risk_rejected_includes_market_regime(self):
+        event = _make_event("RISK_REJECTED", symbol="000660",
+                            payload={"reason_code": "SESSION_BLOCKED",
+                                     "market_regime": "BULL",
+                                     "session_state": "CLOSED_HOLIDAY"})
+        te = format_audit_event(event)
+        assert "CLOSED_HOLIDAY" in te.body or "SESSION" in te.body.upper()
+
+
+class TestNewEventsSecretMasking:
+    """N3: 신규 이벤트도 secret masking 유지"""
+
+    def test_candidate_excluded_no_secret(self):
+        event = _make_event("CANDIDATE_EXCLUDED", symbol="999999",
+                            payload={"excluded_reason": "ETF_EXCLUDED"})
+        te = format_audit_event(event)
+        text = te.body
+        for s in ["app_key", "api_key", "token", "account_no", "chat_id"]:
+            assert s not in text
+
+    def test_quant_evaluated_no_secret(self):
+        event = _make_event("QUANT_EVALUATED", symbol="005930",
+                            payload={"decision": "PASS", "final_score": 85.0})
+        te = format_audit_event(event)
+        for s in ["app_key", "api_key", "token", "account_no", "chat_id"]:
+            assert s not in te.body
+
+
+class TestNewEventPolicy:
+    """N3: allowlist + throttling for new events"""
+
+    def test_candidate_excluded_in_allowlist(self):
+        assert "CANDIDATE_EXCLUDED" in DEFAULT_ALLOWED_EVENT_TYPES
+
+    def test_quant_evaluated_in_allowlist(self):
+        assert "QUANT_EVALUATED" in DEFAULT_ALLOWED_EVENT_TYPES
+
+    def test_candidate_excluded_passes_policy(self):
+        policy = TelegramNotificationPolicy()
+        event = _make_event("CANDIDATE_EXCLUDED", severity="NORMAL")
+        assert policy.is_allowed(event) is True
+
+    def test_quant_evaluated_passes_policy(self):
+        policy = TelegramNotificationPolicy()
+        event = _make_event("QUANT_EVALUATED", severity="NORMAL")
+        assert policy.is_allowed(event) is True
+
+    def test_quant_evaluated_has_throttling(self):
+        policy = TelegramNotificationPolicy()
+        tp = policy.get_throttling_policy("QUANT_EVALUATED")
+        assert tp is not None
+        assert tp.max_count <= 3

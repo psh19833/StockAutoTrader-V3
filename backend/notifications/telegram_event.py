@@ -28,8 +28,12 @@ class TelegramEventType(str, Enum):
     # 시장 국면
     MARKET_REGIME_EVALUATED = "MARKET_REGIME_EVALUATED"
     # 스캐너
+    SCAN_STARTED = "SCAN_STARTED"
     SCAN_COMPLETED = "SCAN_COMPLETED"
     CANDIDATE_DISCOVERED = "CANDIDATE_DISCOVERED"
+    CANDIDATE_EXCLUDED = "CANDIDATE_EXCLUDED"
+    # Quant
+    QUANT_EVALUATED = "QUANT_EVALUATED"
     # 전략
     STRATEGY_SIGNAL_CREATED = "STRATEGY_SIGNAL_CREATED"
     # 리스크
@@ -60,8 +64,11 @@ DEFAULT_SEVERITY_MAP: dict[str, NotificationSeverity] = {
     TelegramEventType.SESSION_STATE_UNKNOWN.value: NotificationSeverity.CRITICAL,
     TelegramEventType.NEW_BUY_BLOCKED_BY_SESSION.value: NotificationSeverity.HIGH,
     TelegramEventType.MARKET_REGIME_EVALUATED.value: NotificationSeverity.NORMAL,
+    TelegramEventType.SCAN_STARTED.value: NotificationSeverity.LOW,
     TelegramEventType.SCAN_COMPLETED.value: NotificationSeverity.NORMAL,
     TelegramEventType.CANDIDATE_DISCOVERED.value: NotificationSeverity.NORMAL,
+    TelegramEventType.CANDIDATE_EXCLUDED.value: NotificationSeverity.LOW,
+    TelegramEventType.QUANT_EVALUATED.value: NotificationSeverity.LOW,
     TelegramEventType.STRATEGY_SIGNAL_CREATED.value: NotificationSeverity.HIGH,
     TelegramEventType.RISK_APPROVED.value: NotificationSeverity.NORMAL,
     TelegramEventType.RISK_REJECTED.value: NotificationSeverity.HIGH,
