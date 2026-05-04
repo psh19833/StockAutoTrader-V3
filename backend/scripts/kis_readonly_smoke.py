@@ -115,8 +115,42 @@ def _safe_error(e: Exception) -> str:
     return f"{type(e).__name__}: {msg[:80]}"
 
 
+def _debug_response_keys(transport, base_url: str, symbol: str) -> None:
+    """응답 key 구조만 출력 (값 출력 금지)"""
+    from kis.client import KisClient
+    client = KisClient(base_url=base_url, transport=transport,
+                       app_key="***", app_secret="***")
+
+    endpoints = [
+        ("market-status", "/uapi/domestic-stock/v1/quotations/market-status"),
+        ("price", "/uapi/price"),
+        ("stock-info", "/uapi/stock-info"),
+    ]
+
+    for name, path in endpoints:
+        try:
+            resp = client.get_json(path)
+            body = resp.body
+            # key 목록만 안전하게 출력
+            top_keys = list(body.keys())
+            safe_keys = [k for k in top_keys if k.lower() not in
+                         ("appkey", "appsecret", "token", "access_token",
+                          "authorization", "account_no", "chat_id")]
+            print(f"  [{name}] top_keys: {safe_keys}")
+            for out_k in ("output", "output1", "output2"):
+                if out_k in body and isinstance(body[out_k], dict):
+                    inner_keys = list(body[out_k].keys())
+                    safe_inner = [k for k in inner_keys if k.lower() not in
+                                  ("appkey", "appsecret", "token", "access_token",
+                                   "account_no", "chat_id")]
+                    print(f"    {out_k} keys: {safe_inner}")
+        except Exception as e:
+            print(f"  [{name}] error: {_safe_error(e)}")
+
+
 def main():
     use_real = "--real" in sys.argv
+    use_debug_keys = "--debug-keys" in sys.argv
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     symbol = args[0] if args else DEFAULT_SYMBOL
 
@@ -136,7 +170,7 @@ def main():
     transport = None
     if use_real:
         from kis.transport import RealTransport
-        transport = RealTransport(timeout=30)
+        transport = RealTransport(base_url=base_url, timeout=30)
         transport_mode = "REAL"
     else:
         from kis.transport import StubTransport
@@ -162,6 +196,13 @@ def main():
 
     if result.get("error"):
         sys.exit(1)
+
+    if use_debug_keys:
+        print()
+        print("=" * 50)
+        print("DEBUG KEYS (values masked)")
+        print("=" * 50)
+        _debug_response_keys(transport, base_url, symbol)
 
 
 if __name__ == "__main__":
