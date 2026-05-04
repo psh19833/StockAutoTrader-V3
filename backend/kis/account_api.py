@@ -4,15 +4,25 @@ from kis.transport import KisTransport, StubTransport
 
 
 class AccountApi:
-    def __init__(self, transport: KisTransport | StubTransport, base_url: str):
+    def __init__(self, transport=None, base_url: str = "", client=None):
         self._transport = transport
         self._base_url = base_url
+        self._client = client
+
+    def _get(self, path: str) -> dict:
+        if self._client:
+            resp = self._client.get_json(path)
+        elif self._transport:
+            resp = self._transport.get_json(path)
+        else:
+            return {}
+        return resp.body if resp.status_code == 200 else {}
 
     def get_balance(self) -> dict:
-        resp = self._transport.get_json("/uapi/balance")
-        if resp.status_code != 200:
+        body = self._get("/uapi/balance")
+        if not body:
             return {"positions": [], "data_available": False}
-        output = resp.body.get("output", [])
+        output = body.get("output", [])
         positions = []
         if isinstance(output, list):
             for item in output:
@@ -22,31 +32,24 @@ class AccountApi:
                     "avg_buy_price": _int(item.get("pchs_avg_pric", 0)),
                     "current_price": _int(item.get("prpr", 0)),
                 })
-        return {
-            "positions": positions,
-            "total_buyable": _int(resp.body.get("total_buyable", 0)),
-            "source": "KIS_API",
-            "source_endpoints": ("kis/balance",),
-            "data_available": True,
-        }
+        return {"positions": positions, "total_buyable": _int(body.get("total_buyable", 0)),
+                "source": "KIS_API", "source_endpoints": ("kis/balance",), "data_available": True}
 
     def get_fills(self) -> list[dict]:
-        resp = self._transport.get_json("/uapi/fills")
-        if resp.status_code != 200:
+        body = self._get("/uapi/fills")
+        if not body:
             return []
-        output = resp.body.get("output", [])
+        output = body.get("output", [])
         fills = []
         if isinstance(output, list):
             for item in output:
                 fills.append({
-                    "order_id": item.get("odno", ""),
-                    "symbol": item.get("pdno", ""),
+                    "order_id": item.get("odno", ""), "symbol": item.get("pdno", ""),
                     "side": "BUY" if item.get("sll_buy_dvsn_cd") == "02" else "SELL",
                     "filled_qty": _int(item.get("tot_ccld_qty", 0)),
                     "filled_amount": _int(item.get("tot_ccld_amt", 0)),
                     "remaining_qty": _int(item.get("rmn_qty", 0)),
-                    "source": "KIS_API",
-                    "source_endpoints": ("kis/fills",),
+                    "source": "KIS_API", "source_endpoints": ("kis/fills",),
                 })
         return fills
 

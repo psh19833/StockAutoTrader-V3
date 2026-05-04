@@ -18,7 +18,7 @@ class ErrorStubTransport:
         self._error = error_type
         self.calls: list = []
 
-    def get_json(self, path, params=None):
+    def get_json(self, path, params=None, headers=None):
         self.calls.append(("GET", path))
         if self._error == "timeout":
             raise KisTimeoutError("Connection timed out")
@@ -30,7 +30,7 @@ class ErrorStubTransport:
             return TransportResponse(500, {"error": "server_error"})
         return TransportResponse(200, {"output": {}})
 
-    def post_json(self, path, json_data=None):
+    def post_json(self, path, json_data=None, headers=None):
         self.calls.append(("POST", path))
         if self._error == "timeout":
             raise KisTimeoutError("Connection timed out")

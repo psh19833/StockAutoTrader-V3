@@ -30,89 +30,69 @@ class KisQueryFacade:
     def get_holidays(self) -> list[str]:
         try:
             from kis.market_schedule_api import MarketScheduleApi
-            api = MarketScheduleApi(transport=self._client._transport,
-                                    base_url=self._client.base_url)
+            api = MarketScheduleApi(client=self._client)
             return api.get_holidays()
         except Exception:
             return []
 
     def get_market_status(self) -> dict:
-        return self._safe_call(
-            lambda: self._call_market_status()
-        )
+        return self._safe_call(lambda: self._call_market_status())
 
     def _call_market_status(self) -> dict:
         from kis.market_schedule_api import MarketScheduleApi
-        api = MarketScheduleApi(transport=self._client._transport,
-                                base_url=self._client.base_url)
+        api = MarketScheduleApi(client=self._client)
         return api.get_market_status()
 
     # ── Market Data ──
 
     def get_current_price(self, symbol: str) -> dict:
-        return self._safe_call(
-            lambda: self._call_price(symbol)
-        )
+        return self._safe_call(lambda: self._call_price(symbol))
 
     def _call_price(self, symbol: str) -> dict:
         from kis.market_data_api import MarketDataApi
-        api = MarketDataApi(transport=self._client._transport,
-                            base_url=self._client.base_url)
+        api = MarketDataApi(client=self._client)
         return api.get_current_price(symbol)
 
     def get_orderbook(self, symbol: str) -> dict:
-        return self._safe_call(
-            lambda: self._call_orderbook(symbol)
-        )
+        return self._safe_call(lambda: self._call_orderbook(symbol))
 
     def _call_orderbook(self, symbol: str) -> dict:
         from kis.market_data_api import MarketDataApi
-        api = MarketDataApi(transport=self._client._transport,
-                            base_url=self._client.base_url)
+        api = MarketDataApi(client=self._client)
         return api.get_orderbook(symbol)
 
     def get_execution_strength(self, symbol: str) -> dict:
-        return self._safe_call(
-            lambda: self._call_execution(symbol)
-        )
+        return self._safe_call(lambda: self._call_execution(symbol))
 
     def _call_execution(self, symbol: str) -> dict:
         from kis.market_data_api import MarketDataApi
-        api = MarketDataApi(transport=self._client._transport,
-                            base_url=self._client.base_url)
+        api = MarketDataApi(client=self._client)
         return api.get_execution_strength(symbol)
 
     # ── Stock Info ──
 
     def get_stock_info(self, symbol: str) -> dict:
-        return self._safe_call(
-            lambda: self._call_stock_info(symbol)
-        )
+        return self._safe_call(lambda: self._call_stock_info(symbol))
 
     def _call_stock_info(self, symbol: str) -> dict:
         from kis.stock_info_api import StockInfoApi
-        api = StockInfoApi(transport=self._client._transport,
-                           base_url=self._client.base_url)
+        api = StockInfoApi(client=self._client)
         return api.get_stock_info(symbol)
 
     # ── Account ──
 
     def get_balance(self) -> dict:
-        return self._safe_call(
-            lambda: self._call_balance()
-        )
+        return self._safe_call(lambda: self._call_balance())
 
     def _call_balance(self) -> dict:
         from kis.account_api import AccountApi
-        api = AccountApi(transport=self._client._transport,
-                         base_url=self._client.base_url)
+        api = AccountApi(client=self._client)
         return api.get_balance()
 
     def get_fills(self) -> list[dict]:
         try:
             from kis.account_api import AccountApi
-            api = AccountApi(transport=self._client._transport,
-                             base_url=self._client.base_url)
+            api = AccountApi(client=self._client)
             return api.get_fills()
         except Exception:
             return []

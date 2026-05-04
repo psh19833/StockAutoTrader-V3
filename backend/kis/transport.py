@@ -27,13 +27,15 @@ class StubTransport:
         self._responses = responses or {}
         self.calls: list[tuple[str, str, dict | None]] = []
 
-    def get_json(self, path: str, params: dict | None = None) -> TransportResponse:
+    def get_json(self, path: str, params: dict | None = None,
+                 headers: dict | None = None) -> TransportResponse:
         self.calls.append(("GET", path, params))
         if path in self._responses:
             return TransportResponse(200, self._responses[path])
         return TransportResponse(404, {"error": "not_found"})
 
-    def post_json(self, path: str, json_data: dict | None = None) -> TransportResponse:
+    def post_json(self, path: str, json_data: dict | None = None,
+                  headers: dict | None = None) -> TransportResponse:
         self.calls.append(("POST", path, json_data))
         if path in self._responses:
             return TransportResponse(200, self._responses[path])
@@ -66,13 +68,17 @@ class RealTransport:
         if any(path.startswith(p) for p in order_paths):
             raise OrderEndpointBlockedError(f"Order endpoint blocked: {path}")
 
-    def get_json(self, path: str, params: dict | None = None) -> TransportResponse:
+    def get_json(self, path: str, params: dict | None = None,
+                 headers: dict | None = None) -> TransportResponse:
         self._check_order_endpoint(path)
         import urllib.request
         import json
         url = self._full_url(path)
         try:
             req = urllib.request.Request(url, method="GET")
+            if headers:
+                for k, v in headers.items():
+                    req.add_header(k, v)
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
                 return TransportResponse(
@@ -88,16 +94,20 @@ class RealTransport:
         except Exception as e:
             return TransportResponse(status_code=500, body={"error": str(e)})
 
-    def post_json(self, path: str, json_data: dict | None = None) -> TransportResponse:
+    def post_json(self, path: str, json_data: dict | None = None,
+                  headers: dict | None = None) -> TransportResponse:
         self._check_order_endpoint(path)
         import urllib.request
         import json
         url = self._full_url(path)
         try:
             data = json.dumps(json_data or {}).encode("utf-8")
+            req_headers = {"Content-Type": "application/json"}
+            if headers:
+                req_headers.update(headers)
             req = urllib.request.Request(
                 url, data=data, method="POST",
-                headers={"Content-Type": "application/json"},
+                headers=req_headers,
             )
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))

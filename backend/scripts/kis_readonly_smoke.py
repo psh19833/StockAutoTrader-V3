@@ -64,11 +64,14 @@ def run_smoke_with_transport(
         results["token"] = f"FAIL: {_safe_error(e)}"
         return results
 
-    # 3. Query Facade
+    # 3. Client with auth
+    from kis.client import KisClient
     client = KisClient(
         base_url=base_url, transport=transport,
         app_key=app_key, app_secret=app_secret,
     )
+    client.auth_manager.set_token(token)
+
     facade = KisQueryFacade(client=client)
 
     # 4. 휴장일조회

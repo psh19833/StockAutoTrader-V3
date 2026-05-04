@@ -68,14 +68,27 @@ class KisClient:
         if self._transport is None:
             from kis.transport import TransportResponse
             return TransportResponse(404, {"error": "no_transport"})
-        return self._transport.get_json(path, params)
+        headers = self._auth_headers()
+        return self._transport.get_json(path, params, headers=headers)
 
     def post_json(self, path: str, json_data: dict | None = None):
         self._check_order_endpoint(path)
         if self._transport is None:
             from kis.transport import TransportResponse
             return TransportResponse(404, {"error": "no_transport"})
-        return self._transport.post_json(path, json_data)
+        headers = self._auth_headers()
+        headers["content-type"] = "application/json"
+        return self._transport.post_json(path, json_data, headers=headers)
+
+    def _auth_headers(self) -> dict[str, str]:
+        """KIS 인증 헤더 구성 (token + appkey + appsecret)"""
+        h = {}
+        try:
+            auth = self.auth_manager.get_authorization_header()
+            h.update(auth)
+        except Exception:
+            pass
+        return h
 
     def _build_url(self, path: str) -> str:
         """전체 URL 빌드
