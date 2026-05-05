@@ -9,3 +9,4 @@ build/
 venv/
 *.db
 logs/Zone.Identifier
+logs/
