@@ -15,10 +15,13 @@ import ScannerCandidatesTable from "../components/dashboard/ScannerCandidatesTab
 import QuantScoresTable from "../components/dashboard/QuantScoresTable";
 import RiskDecisionsTable from "../components/dashboard/RiskDecisionsTable";
 import LogViewer from "../components/dashboard/LogViewer";
+import AuditTimelineList from "../components/audit/AuditTimelineList";
+import AuditEventDetailPanel from "../components/audit/AuditEventDetailPanel";
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [selectedEventId, setSelectedEventId] = useState("");
 
   useEffect(() => {
     fetchDashboardSummary()
@@ -66,6 +69,15 @@ export default function DashboardPage() {
       {/* Row 4: Log Viewer */}
       <div style={{ marginTop: 16 }}>
         <LogViewer />
+      </div>
+
+      {/* Row 5: Audit Timeline + Evidence */}
+      <div style={{ marginTop: 16 }}>
+        <AuditTimelineList
+          onSelectEvent={(id) => setSelectedEventId(id)}
+          selectedEventId={selectedEventId}
+        />
+        <AuditEventDetailPanel eventId={selectedEventId} />
       </div>
     </div>
   );

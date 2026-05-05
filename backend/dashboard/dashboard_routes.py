@@ -92,6 +92,10 @@ def handle_get_audit_by_correlation(correlation_id: str) -> list[dict[str, Any]]
             for e in get_service().get_audit_by_correlation(correlation_id)]
 
 
+def handle_get_audit_event_detail(event_id: str) -> dict[str, Any]:
+    return get_service().get_audit_event_detail(event_id)
+
+
 def handle_get_telegram_status() -> dict[str, Any]:
     from dashboard.dashboard_models import TelegramStatusView
     import os

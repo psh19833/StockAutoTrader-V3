@@ -28,6 +28,7 @@ class DashboardService:
         self._fills: list[FillStatusView] = []
         self._portfolio: list[PortfolioView] = []
         self._audit_events: list[AuditTimelineView] = []
+        self._audit_event_payloads: dict[str, dict[str, Any]] = {}
         self._audit_repo = None
 
     # ── 데이터 주입 (Stub 용) ──
@@ -40,6 +41,13 @@ class DashboardService:
 
     def inject_audit_events(self, items: list[AuditTimelineView]) -> None:
         self._audit_events = items
+
+    def inject_audit_event_payloads(self, payloads: dict[str, dict[str, Any]]) -> None:
+        """Inject sanitized payloads keyed by event_id (stub/testing).
+
+        NOTE: payloads must be sanitized already or will be sanitized at read time.
+        """
+        self._audit_event_payloads = dict(payloads)
 
     # ── Repository 주입 (DB 연결) ──
 
@@ -173,3 +181,55 @@ class DashboardService:
     def get_audit_by_correlation(self, correlation_id: str) -> list[AuditTimelineView]:
         return [e for e in self._audit_events
                 if e.correlation_id == correlation_id]
+
+    def get_audit_event_detail(self, event_id: str) -> dict[str, Any]:
+        """Audit event detail (read-only).
+
+        - Returns sanitized payload JSON (local-only advanced/debug UI)
+        - Returns checklist if the payload contains one
+        - Never returns raw REST response bodies or raw WebSocket full messages
+        """
+        from audit_logging.log_sanitizer import sanitize_dict
+
+        timeline = next((e for e in self._audit_events if e.event_id == event_id), None)
+
+        payload = self._audit_event_payloads.get(event_id, {})
+        payload_sanitized = sanitize_dict(payload) if isinstance(payload, dict) else {}
+
+        checklist = None
+        if isinstance(payload_sanitized, dict):
+            cl = payload_sanitized.get("checklist")
+            if isinstance(cl, dict):
+                checklist = cl
+
+        related = []
+        if timeline and timeline.correlation_id:
+            related = [
+                {
+                    "event_id": e.event_id,
+                    "event_type": e.event_type,
+                    "severity": e.severity,
+                    "timestamp": e.timestamp,
+                    "symbol": e.symbol,
+                    "strategy_name": e.strategy_name,
+                    "status": e.status,
+                    "summary": e.summary,
+                    "correlation_id": e.correlation_id,
+                }
+                for e in self.get_audit_by_correlation(timeline.correlation_id)
+            ]
+
+        return {
+            "event_id": event_id,
+            "correlation_id": timeline.correlation_id if timeline else "",
+            "event_type": timeline.event_type if timeline else "",
+            "severity": timeline.severity if timeline else "INFO",
+            "timestamp": timeline.timestamp if timeline else "",
+            "symbol": timeline.symbol if timeline else "",
+            "strategy_name": timeline.strategy_name if timeline else "",
+            "status": timeline.status if timeline else "",
+            "summary": timeline.summary if timeline else "",
+            "checklist": checklist,
+            "payload_sanitized": payload_sanitized,
+            "related_events": related,
+        }

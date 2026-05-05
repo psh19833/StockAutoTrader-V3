@@ -113,6 +113,12 @@ async def dashboard_audit(limit: int = 50):
     return handle_get_audit_timeline(limit)
 
 
+@app.get("/api/dashboard/audit/{event_id}")
+async def dashboard_audit_event_detail(event_id: str):
+    from dashboard.dashboard_routes import handle_get_audit_event_detail
+    return handle_get_audit_event_detail(event_id)
+
+
 @app.get("/api/dashboard/telegram-status")
 async def telegram_status():
     from dashboard.dashboard_routes import handle_get_telegram_status

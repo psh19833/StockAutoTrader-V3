@@ -45,3 +45,15 @@ export async function fetchLogDates() {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+export async function fetchAuditTimeline(limit = 50) {
+  const res = await fetch(`${API_BASE}/api/dashboard/audit?limit=${limit}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAuditEventDetail(eventId) {
+  const res = await fetch(`${API_BASE}/api/dashboard/audit/${eventId}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}

@@ -7,6 +7,8 @@ from risk.risk_decision import RiskDecision
 
 def build_risk_audit_event(decision: RiskDecision) -> AuditEvent:
     """RiskDecision → RISK_APPROVED / RISK_REJECTED AuditEvent"""
+    from evidence.checklist_mappers import risk_decision_to_checklist
+
     event_type = "RISK_APPROVED" if decision.allowed else "RISK_REJECTED"
     return AuditEvent(
         event_type=event_type,
@@ -26,5 +28,7 @@ def build_risk_audit_event(decision: RiskDecision) -> AuditEvent:
             "failed_items": list(decision.failed_items),
             "market_regime": decision.market_regime,
             "session_state": decision.session_state,
+            # Evidence checklist (schema + result)
+            "checklist": risk_decision_to_checklist(decision).to_dict(),
         },
     )

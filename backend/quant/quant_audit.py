@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from quant.candidate_score import QuantCandidateScore
+from evidence.checklist_mappers import quant_score_to_checklist
 
 
 def build_quant_audit_event(
@@ -37,6 +38,8 @@ def build_quant_audit_event(
             "decision": score.decision.value,
             "final_score": score.final_score,
             "reasons": list(score.reasons),
+            # Evidence checklist (schema + result)
+            "checklist": quant_score_to_checklist(score).to_dict(),
             # 공통 점수
             "liquidity_score": score.liquidity_score,
             "spread_score": score.spread_score,

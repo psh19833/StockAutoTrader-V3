@@ -46,12 +46,16 @@ def build_scan_completed_event(result: ScanRunResult) -> AuditEvent:
 
 def build_candidate_discovered_event(candidate: ScannerCandidate) -> AuditEvent:
     """CANDIDATE_DISCOVERED AuditEvent 생성"""
+    from evidence.checklist_mappers import scanner_candidate_to_checklist
+
     payload = dict(candidate.metrics)
     payload.update({
         "symbol_name": candidate.symbol_name,
         "scanner_type": candidate.scanner_type.value,
         "scan_run_id": candidate.scan_run_id,
         "discovered_reason": candidate.discovered_reason,
+        # Evidence checklist (schema + result)
+        "checklist": scanner_candidate_to_checklist(candidate).to_dict(),
     })
     return AuditEvent(
         event_type=AuditEventType.CANDIDATE_DISCOVERED.value,
@@ -64,12 +68,16 @@ def build_candidate_discovered_event(candidate: ScannerCandidate) -> AuditEvent:
 
 def build_candidate_excluded_event(candidate: ScannerCandidate) -> AuditEvent:
     """CANDIDATE_EXCLUDED AuditEvent 생성"""
+    from evidence.checklist_mappers import scanner_candidate_to_checklist
+
     payload = dict(candidate.metrics)
     payload.update({
         "symbol_name": candidate.symbol_name,
         "scanner_type": candidate.scanner_type.value,
         "scan_run_id": candidate.scan_run_id,
         "excluded_reason": candidate.excluded_reason,
+        # Evidence checklist (schema + result)
+        "checklist": scanner_candidate_to_checklist(candidate).to_dict(),
     })
     return AuditEvent(
         event_type=AuditEventType.CANDIDATE_EXCLUDED.value,
