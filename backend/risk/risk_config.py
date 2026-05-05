@@ -15,3 +15,4 @@ class RiskLimits:
     max_daily_loss_pct: float = 0.05               # 예수금 대비 일일손실한도 5%
     reentry_block_minutes: int = 30                 # 재진입 제한 시간
     min_candidate_score_for_buy: float = 50.0       # 최소 퀀트 점수
+    max_position_count: int = 5                     # 최대 보유 포지션 수

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from scanner.scanner_types import ScannerType
 
@@ -19,24 +19,28 @@ class ScannerCandidate:
     Scanner가 발굴한 단일 후보.
     정량 조건 기반 편입/탈락 근거를 포함한다.
 
+    market/product_type은 원본 값을 보존한다.
+    Scanner가 임의로 KOSPI/COMMON_STOCK으로 덮어쓰지 않는다.
+    제외된 후보(excluded)는 다시 Quant PASS될 수 없다.
+
     Attributes:
         symbol: 종목 코드
         symbol_name: 종목명 (선택)
-        market: 시장 (KOSPI/KOSDAQ)
-        product_type: 상품 유형 (COMMON_STOCK)
+        market: 시장 (KOSPI/KOSDAQ 또는 원본 그대로)
+        product_type: 상품 유형 (COMMON_STOCK 또는 원본 그대로)
         scanner_type: 발굴한 Scanner Type
         discovered_at: 발굴 시각
         discovered_reason: 편입 사유 튜플
         metrics: 정량 메트릭
-        source_endpoints: 데이터 출처 엔드포인트
+        source_endpoints: 데이터 출처 엔드포인트 (후보별 분리)
         source: 데이터 출처 (KIS_API)
         scan_run_id: 스캔 실행 ID
         included: 후보 포함 여부
         excluded_reason: 제외 사유 (포함 시 None)
     """
     symbol: str
-    market: Literal["KOSPI", "KOSDAQ"]
-    product_type: Literal["COMMON_STOCK"]
+    market: str
+    product_type: str
     scanner_type: ScannerType
     discovered_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)

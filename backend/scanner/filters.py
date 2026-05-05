@@ -2,6 +2,9 @@
 
 모든 Scanner는 공통 필터를 먼저 통과해야 하며,
 Scanner Type별 정량 조건은 후보 발굴 시 적용된다.
+
+_get_float()는 변환 실패 시 None을 반환한다.
+"-", "", "N/A", "nan" 같은 malformed 값 때문에 scanner 전체가 중단되면 안 된다.
 """
 from __future__ import annotations
 
@@ -78,11 +81,23 @@ class CommonFilterResult:
 
 
 def _get_float(metrics: dict[str, Any], key: str) -> float | None:
-    """metrics에서 float 값 추출 (None-safe)"""
+    """metrics에서 float 값 추출 (None-safe, malformed-safe)
+
+    변환 실패 시 None을 반환. "-", "", "N/A", "nan" 등 malformed 값은
+    전체 scanner run을 중단시키지 않고 해당 필터 실패로 처리된다.
+    """
     val = metrics.get(key)
     if val is None:
         return None
-    return float(val)
+    # Malformed 값 방어: 빈 문자열, "-", "N/A", "nan", 숫자 아닌 객체
+    if isinstance(val, str):
+        stripped = val.strip()
+        if stripped in ("", "-", "N/A", "nan", "NaN", "None", "null"):
+            return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
 
 
 def check_common_filters(

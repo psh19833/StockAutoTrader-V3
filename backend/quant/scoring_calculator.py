@@ -5,6 +5,11 @@ ScannerCandidate + MarketRegimeResult → QuantCandidateScore
 
 Quant PASS는 매수 신호가 아니다.
 Strategy Engine에 넘길 수 있는 후보라는 의미일 뿐이다.
+
+핵심 안전 원칙:
+  - Scanner에서 제외된 후보(excluded)는 무조건 REJECT (metric이 좋아도 PASS 불가).
+  - data_quality_warnings (STALE, DISCONNECTED, DATA_UNAVAILABLE 등)가 있으면 Quant PASS 불가.
+  - 음수 change(하락률)를 긍정 모멘텀으로 가산하지 않는다. 급락은 별도 risk penalty로 처리.
 """
 from __future__ import annotations
 
@@ -91,9 +96,15 @@ def compute_common_scores(metrics: dict[str, Any]) -> dict[str, float]:
     volume_score = _clamp(vol_base + vol_bonus)
 
     # 모멘텀: 등락률 + 체결강도
+    # STEP 6: 음수 change를 긍정 모멘텀으로 가산하지 않음
+    # change <= 0 이면 change_score = 0
+    # 급락은 risk penalty나 volatility penalty로 별도 반영
     change = metrics.get("intraday_change_rate", 0) or 0
     exec_str = metrics.get("execution_strength", 0) or 0
-    change_score = _clamp(abs(change) * 1.5)
+    if change > 0:
+        change_score = _clamp(change * 1.5)
+    else:
+        change_score = 0.0
     exec_score = _clamp(exec_str / 20.0)
     momentum_score = _clamp((change_score + exec_score) / 2)
 
@@ -267,6 +278,45 @@ def evaluate_candidate(
     Returns:
         QuantCandidateScore (PASS는 매수 신호가 아님)
     """
+    # ── STEP 1: Scanner excluded 후보는 바로 REJECT ──
+    # excluded 후보는 metric이 좋아도 Quant PASS 불가
+    if not candidate.included:
+        return QuantCandidateScore(
+            symbol=candidate.symbol,
+            scanner_type=candidate.scanner_type.value,
+            scan_run_id=candidate.scan_run_id,
+            evaluation_id=uuid.uuid4().hex[:12],
+            final_score=0.0,
+            decision=QuantDecision.REJECT,
+            reasons=("SCANNER_EXCLUDED", candidate.excluded_reason or "excluded_by_scanner"),
+            source_endpoints=candidate.source_endpoints,
+            data_quality_warnings=(),
+        )
+
+    # ── STEP 5: data_quality_warnings 차단 ──
+    # critical data quality issue가 있으면 Quant PASS 불가
+    dq_warnings = regime_result.data_quality_warnings or ()
+    critical_keywords = (
+        "STALE", "DISCONNECTED", "DATA_UNAVAILABLE",
+        "KIS_QUERY_FAILED", "ORDERBOOK_MISSING", "QUOTE_MISSING",
+    )
+    has_critical = any(
+        any(kw in (w or "") for kw in critical_keywords)
+        for w in dq_warnings
+    )
+    if has_critical:
+        return QuantCandidateScore(
+            symbol=candidate.symbol,
+            scanner_type=candidate.scanner_type.value,
+            scan_run_id=candidate.scan_run_id,
+            evaluation_id=uuid.uuid4().hex[:12],
+            final_score=0.0,
+            decision=QuantDecision.REJECT,
+            reasons=("DATA_QUALITY_BLOCKED",) + dq_warnings,
+            source_endpoints=candidate.source_endpoints,
+            data_quality_warnings=dq_warnings,
+        )
+
     cfg = DEFAULT_SCORING_CONFIG
     if config:
         from quant.scoring_config import get_scoring_config

@@ -4,6 +4,10 @@ Quant PASS → evaluate_entry() → StrategySignal (BUY)
 보유 종목 → evaluate_exit() → StrategySignal (SELL)
 
 Signal은 주문이 아니다. Risk Engine 승인 전까지 주문으로 전환되지 않는다.
+
+핵심 안전 원칙:
+  - data_quality_warnings가 있으면 Quant PASS라도 StrategySignal 생성 금지.
+  - Quant REJECT/WATCH → StrategySignal 생성 금지.
 """
 from __future__ import annotations
 
@@ -76,6 +80,11 @@ def evaluate_entry(
     """
     # Quant REJECT/WATCH → 신호 생성 금지
     if score.decision != QuantDecision.PASS:
+        return None
+
+    # STEP 11: data_quality_warnings가 있으면 신호 생성 금지
+    # data_quality_warnings는 evidence에 남기지 않고, 신호 생성 자체를 막는다
+    if score.data_quality_warnings:
         return None
 
     # Market Regime 차단

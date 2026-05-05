@@ -10,6 +10,12 @@ Pipeline:
 
 Scanner는 매수/매도 신호를 만들지 않는다.
 Scanner는 주문 수량, 손절가, 익절가를 계산하지 않는다.
+
+핵심 안전 원칙:
+  - Scanner에서 제외된 후보(excluded)는 다시 Quant PASS될 수 없다.
+  - market/product_type은 원본 값을 보존하며 임의로 KOSPI/COMMON_STOCK으로 덮어쓰지 않는다.
+  - source_endpoints는 후보별로 분리되어 다른 종목의 엔드포인트가 섞이지 않는다.
+  - run_scanner의 market_regime 인자는 metrics["market_regime"]으로 명시 주입된다.
 """
 from __future__ import annotations
 
@@ -71,9 +77,12 @@ def run_scanner(
         market = stock.get("market")
         product_type = stock.get("product_type")
         source = stock.get("source", "KIS_API")
+        # STEP 2: run_scanner의 market_regime 인자를 metrics에 주입
+        # stock에 이미 market_regime이 있어도 run_scanner 인자를 우선
         metrics = {k: v for k, v in stock.items()
                    if k not in ("symbol", "symbol_name", "market",
                                 "product_type", "source")}
+        metrics["market_regime"] = market_regime
 
         reason: str | None = None
         included = False
@@ -103,19 +112,31 @@ def run_scanner(
                 else:
                     reason = scanner_result.reason if scanner_result.reason else ExclusionReason.SCANNER_CONDITION_NOT_MET.value
 
-        # Aggregate source_endpoints
-        if "source_endpoints" in stock:
-            endpoints.update(stock["source_endpoints"])
+        # STEP 10: 후보별 source_endpoints — stock 자체의 것만 사용
+        stock_endpoints = stock.get("source_endpoints", ())
+        if isinstance(stock_endpoints, (list, tuple, set)):
+            candidate_endpoints = tuple(stock_endpoints)
+        else:
+            candidate_endpoints = ()
+
+        # Aggregate 전체 endpoints set (for scan result)
+        if candidate_endpoints:
+            endpoints.update(candidate_endpoints)
+
+        # STEP 3: market/product_type 원본 보존
+        # scanner_engine이 임의로 KOSPI/COMMON_STOCK으로 덮어쓰지 않음
+        display_market = market or "UNKNOWN"
+        display_product = product_type or "UNKNOWN"
 
         candidates.append(ScannerCandidate(
             symbol=symbol,
-            market=market if market in ("KOSPI", "KOSDAQ") else "KOSPI",
-            product_type="COMMON_STOCK",
+            market=display_market if display_market in ("KOSPI", "KOSDAQ", "UNKNOWN") else display_market,
+            product_type=display_product,
             scanner_type=scanner_type,
             symbol_name=symbol_name,
             discovered_reason=tuple(discovered_reason),
             metrics=metrics,
-            source_endpoints=tuple(endpoints) if endpoints else (),
+            source_endpoints=candidate_endpoints,
             source="KIS_API",
             scan_run_id=scan_id,
             included=included,
