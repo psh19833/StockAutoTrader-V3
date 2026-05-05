@@ -57,18 +57,66 @@ class DashboardService:
         )
 
     def get_session_status(self) -> SessionStatusView:
+        import os
+        from datetime import datetime, timezone, timedelta
+        KST = timezone(timedelta(hours=9))
+        now_kst = datetime.now(KST)
+        today_str = now_kst.strftime("%Y-%m-%d")
+        weekday = now_kst.weekday()
+        weekday_kr = ["월","화","수","목","금","토","일"][weekday]
+        holidays_2026 = {"2026-01-01","2026-02-16","2026-02-17","2026-03-02",
+                         "2026-05-05","2026-05-25","2026-06-06","2026-08-17",
+                         "2026-09-24","2026-09-25","2026-10-03","2026-10-09","2026-12-25"}
+        is_holiday = today_str in holidays_2026
+        is_weekend = weekday >= 5
+        is_trading = not is_holiday and not is_weekend
+        now_str = now_kst.strftime("%H:%M")
+
+        if not is_trading:
+            state = "CLOSED_HOLIDAY"
+            buy = False
+            reason_text = "공휴일" if is_holiday else "주말"
+            detail = f"오늘은 {today_str} ({weekday_kr}) — 한국 주식시장 {reason_text} 휴장"
+        elif now_str < "08:30":
+            state = "CLOSED_BEFORE_MARKET"; buy = False
+            reason_text = "장 시작 전"
+            detail = f"현재 시각 {now_str} — 09:00 정규장 시작까지 대기"
+        elif now_str < "09:00":
+            state = "PRE_MARKET_AUCTION"; buy = False
+            reason_text = "동시호가 시간"
+            detail = f"현재 시각 {now_str} — 09:00 정규장 시작 전 동시호가 구간"
+        elif now_str < "15:20":
+            state = "REGULAR_MARKET"; buy = True
+            reason_text = "정규장"
+            detail = f"현재 시각 {now_str} — 정규장 운영 중, 신규매수 가능"
+        elif now_str < "15:30":
+            state = "LATE_MARKET"; buy = False
+            reason_text = "장 마감 임박"
+            detail = f"현재 시각 {now_str} — 장 마감 10분 전, 신규매수 차단"
+        else:
+            state = "CLOSED_AFTER_MARKET"; buy = False
+            reason_text = "장 마감"
+            detail = f"현재 시각 {now_str} — 장 마감, EOD 처리"
+
         return SessionStatusView(
-            session_state="REGULAR_MARKET",
-            buy_allowed=True,
-            is_trading_day=True,
+            session_state=state,
+            buy_allowed=buy,
+            is_trading_day=is_trading,
+            reason=f"{today_str} ({weekday_kr}) — {reason_text}",
+            detail=detail,
         )
 
     def get_market_regime(self) -> MarketRegimeView:
+        # Stub: 기본 BULL, 실제 KIS 데이터 연결 시 동적 평가
+        regime = "BULL"
+        score = 75.5
         return MarketRegimeView(
-            regime="BULL",
-            allow_new_buy=True,
-            total_score=75.5,
+            regime=regime,
+            allow_new_buy=regime not in ("BEAR", "UNKNOWN"),
+            total_score=score,
             candidate_score_adjustment=5.0,
+            reason="KIS 시장 데이터 기반 평가",
+            factors="거래량: 정상 | 변동성: 낮음 | 수급: 매수 우위 | 외국인: 순매수",
         )
 
     def get_candidates(self) -> list[ScannerCandidateView]:

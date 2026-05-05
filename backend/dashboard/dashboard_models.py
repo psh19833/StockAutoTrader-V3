@@ -22,6 +22,8 @@ class SessionStatusView:
     buy_allowed: bool
     is_trading_day: bool
     next_session: str = ""
+    reason: str = ""
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class MarketRegimeView:
     allow_new_buy: bool
     total_score: float
     candidate_score_adjustment: float
+    reason: str = ""
+    factors: str = ""
 
 
 @dataclass(frozen=True)
