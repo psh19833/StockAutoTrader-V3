@@ -2,6 +2,17 @@
 
 Entry point for uvicorn: uvicorn main:app --host 127.0.0.1 --port 8000
 """
+import os
+from pathlib import Path
+
+# Load .env from project root
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parents[1] / ".env"
+    load_dotenv(_env_path)
+except ImportError:
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
