@@ -119,17 +119,20 @@ def start_backend() -> bool:
     venv_python = str(_PROJECT_ROOT / ".venv" / "bin" / "python")
     print(f"  Starting backend: uvicorn main:app --host 127.0.0.1 --port {_BACKEND_PORT}")
     _log("start_backend: starting...")
+    log_fh = open(log_path, "a", encoding="utf-8")
     try:
         env = {**os.environ, "PYTHONPATH": str(_BACKEND_DIR)}
         _backend_proc = subprocess.Popen(
             [venv_python, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(_BACKEND_PORT)],
             cwd=str(_BACKEND_DIR), env=env,
-            stdout=open(log_path, "a", encoding="utf-8"),
+            stdout=log_fh,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
     except Exception as e:
+        log_fh.close()
         print(f"  ERROR: {e}")
+        _log(f"start_backend: FAILED — {e}")
         return False
     for _ in range(30):
         if _port_is_open(_BACKEND_PORT):
@@ -161,16 +164,19 @@ def start_frontend() -> bool:
     log_path = _LOGS_DIR / _LOG_FRONTEND
     print(f"  Starting frontend: npm run dev (port {_FRONTEND_PORT})")
     _log("start_frontend: starting...")
+    log_fh = open(log_path, "a", encoding="utf-8")
     try:
         _frontend_proc = subprocess.Popen(
-            ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(_FRONTEND_PORT)],
+            ["npm", "run", "dev", "--host", "127.0.0.1", "--port", str(_FRONTEND_PORT)],
             cwd=str(_FRONTEND_DIR),
-            stdout=open(log_path, "a", encoding="utf-8"),
+            stdout=log_fh,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
     except Exception as e:
+        log_fh.close()
         print(f"  ERROR: {e}")
+        _log(f"start_frontend: FAILED — {e}")
         return False
     for _ in range(40):
         if _port_is_open(_FRONTEND_PORT):
