@@ -238,7 +238,7 @@ def _format_scan_completed(event: AuditEvent) -> TelegramEvent:
 
 
 def _format_candidate_discovered(event: AuditEvent) -> TelegramEvent:
-    title = f"💡 종목 발견 — {event.symbol or '(종목 미지정)'}"
+    title = f"🎯 후보 발견 — {event.symbol or '(종목 미지정)'}"
     body = "새로운 매수 후보 종목이 발견되었습니다."
     if event.symbol:
         body += f"\n  종목: {event.symbol}"
@@ -492,6 +492,79 @@ def _format_quant_evaluated(event: AuditEvent) -> TelegramEvent:
     )
 
 
+# ── 신규 formatter: WebSocket / Exit ──────────────────────────────────────
+
+def _format_ws_connected(event: AuditEvent) -> TelegramEvent:
+    return TelegramEvent(
+        event_type=TelegramEventType.WS_CONNECTED.value,
+        title="🔌 WebSocket 연결됨",
+        body="KIS 실시간 데이터 WebSocket 연결이 수립되었습니다.",
+        notification_severity=NotificationSeverity.NORMAL,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
+def _format_ws_disconnected(event: AuditEvent) -> TelegramEvent:
+    body = "KIS 실시간 데이터 WebSocket 연결이 끊어졌습니다."
+    pl = event.payload or {}
+    if "error" in pl:
+        body += f"\n  오류: {pl['error']}"
+    return TelegramEvent(
+        event_type=TelegramEventType.WS_DISCONNECTED.value,
+        title="⚡ WebSocket 끊김",
+        body=body,
+        notification_severity=NotificationSeverity.HIGH,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
+def _format_ws_reconnecting(event: AuditEvent) -> TelegramEvent:
+    pl = event.payload or {}
+    attempt = pl.get("attempt", "?")
+    return TelegramEvent(
+        event_type=TelegramEventType.WS_RECONNECTING.value,
+        title="🔄 WebSocket 재연결 중",
+        body=f"WebSocket 재연결 시도 중입니다. (시도: {attempt}회)",
+        notification_severity=NotificationSeverity.NORMAL,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
+def _format_stop_loss(event: AuditEvent) -> TelegramEvent:
+    pl = event.payload or {}
+    symbol = event.symbol or pl.get("symbol", "(종목 미지정)")
+    price = pl.get("exit_price", "?")
+    pnl_pct = pl.get("pnl_pct", "?")
+    body = f"손절이 실행되었습니다.\n  종목: {symbol}\n  가격: {price}\n  손실률: {pn_pct}%"
+    return TelegramEvent(
+        event_type=TelegramEventType.STOP_LOSS.value,
+        title=f"🔴 손절 — {symbol}",
+        body=body,
+        notification_severity=NotificationSeverity.CRITICAL,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
+def _format_take_profit(event: AuditEvent) -> TelegramEvent:
+    pl = event.payload or {}
+    symbol = event.symbol or pl.get("symbol", "(종목 미지정)")
+    price = pl.get("exit_price", "?")
+    pnl_pct = pl.get("pnl_pct", "?")
+    body = f"익절이 실행되었습니다.\n  종목: {symbol}\n  가격: {price}\n  수익률: +{pn_pct}%"
+    return TelegramEvent(
+        event_type=TelegramEventType.TAKE_PROFIT.value,
+        title=f"🟢 익절 — {symbol}",
+        body=body,
+        notification_severity=NotificationSeverity.HIGH,
+        correlation_id=event.correlation_id,
+        source_audit_event_id=event.event_id,
+    )
+
+
 # Formatter 디스패치 맵
 _FORMATTER_MAP: dict[str, callable] = {
     "SERVER_STARTED": _format_server_started,
@@ -517,6 +590,11 @@ _FORMATTER_MAP: dict[str, callable] = {
     "SCAN_STARTED": _format_scan_started,
     "CANDIDATE_EXCLUDED": _format_candidate_excluded,
     "QUANT_EVALUATED": _format_quant_evaluated,
+    "WS_CONNECTED": _format_ws_connected,
+    "WS_DISCONNECTED": _format_ws_disconnected,
+    "WS_RECONNECTING": _format_ws_reconnecting,
+    "STOP_LOSS": _format_stop_loss,
+    "TAKE_PROFIT": _format_take_profit,
 }
 
 

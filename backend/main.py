@@ -143,3 +143,35 @@ async def log_dates():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/api/telegram/test")
+async def telegram_test(data: dict = {}):
+    """Telegram test endpoint. Dry-run by default, requires confirm to actually send."""
+    confirm = data.get("confirm", "") if data else ""
+    from notifications.telegram_event import TelegramEvent, TelegramEventType, NotificationSeverity
+    from notifications.telegram_sender import RealTelegramSender
+
+    event = TelegramEvent(
+        event_type=TelegramEventType.SERVER_STARTED.value,
+        title="🧪 SAT3 Telegram 알림 테스트",
+        body="이 메시지는 SAT3 대시보드에서 전송된 테스트 알림입니다.",
+        notification_severity=NotificationSeverity.NORMAL,
+    )
+
+    if confirm == "SEND_TEST_TELEGRAM":
+        sender = RealTelegramSender()
+        result = sender.send(event)
+        return {
+            "sent": result.success,
+            "message_id": result.message_id,
+            "error": result.error_message,
+            "preview": event.formatted_message,
+        }
+
+    return {
+        "sent": False,
+        "mode": "dry-run",
+        "hint": "Send 'confirm': 'SEND_TEST_TELEGRAM' to actually send",
+        "preview": event.formatted_message,
+    }

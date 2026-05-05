@@ -53,6 +53,13 @@ class TelegramEventType(str, Enum):
     EMERGENCY_STOP_RELEASED = "EMERGENCY_STOP_RELEASED"
     # KIS
     KIS_API_FAILED = "KIS_API_FAILED"
+    # WebSocket
+    WS_CONNECTED = "WS_CONNECTED"
+    WS_DISCONNECTED = "WS_DISCONNECTED"
+    WS_RECONNECTING = "WS_RECONNECTING"
+    # 청산
+    STOP_LOSS = "STOP_LOSS"
+    TAKE_PROFIT = "TAKE_PROFIT"
 
 
 # 이벤트 타입별 기본 심각도 매핑
@@ -80,6 +87,11 @@ DEFAULT_SEVERITY_MAP: dict[str, NotificationSeverity] = {
     TelegramEventType.EMERGENCY_STOP_ACTIVATED.value: NotificationSeverity.CRITICAL,
     TelegramEventType.EMERGENCY_STOP_RELEASED.value: NotificationSeverity.HIGH,
     TelegramEventType.KIS_API_FAILED.value: NotificationSeverity.HIGH,
+    TelegramEventType.WS_CONNECTED.value: NotificationSeverity.NORMAL,
+    TelegramEventType.WS_DISCONNECTED.value: NotificationSeverity.HIGH,
+    TelegramEventType.WS_RECONNECTING.value: NotificationSeverity.NORMAL,
+    TelegramEventType.STOP_LOSS.value: NotificationSeverity.CRITICAL,
+    TelegramEventType.TAKE_PROFIT.value: NotificationSeverity.HIGH,
 }
 
 

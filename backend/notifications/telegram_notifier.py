@@ -53,11 +53,16 @@ class TelegramNotifier:
             if not self.policy.is_allowed(event):
                 return None
 
-            # Step 2: Throttling 확인
-            throttle_policy = self.policy.get_throttling_policy(event.event_type)
-            if throttle_policy is not None:
-                if not self.throttling_tracker.can_send(event.event_type, throttle_policy):
-                    return None
+            # Step 2: Throttling 확인 (비상정지는 bypass)
+            is_emergency = event.event_type in (
+                "EMERGENCY_STOP_ACTIVATED", "EMERGENCY_STOP_RELEASED",
+                "WS_DISCONNECTED",
+            )
+            if not is_emergency:
+                throttle_policy = self.policy.get_throttling_policy(event.event_type)
+                if throttle_policy is not None:
+                    if not self.throttling_tracker.can_send(event.event_type, throttle_policy):
+                        return None
 
             # Step 3: Formatter 변환
             try:
