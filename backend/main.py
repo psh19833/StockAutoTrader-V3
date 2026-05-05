@@ -18,7 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="SAT3 Dashboard API", version="3.0.0")
 
-# Startup log
+# Startup log — add project root to path for tools import
+import sys as _sys
+_project_root = str(Path(__file__).resolve().parents[1])
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
 from tools.daily_logger import DailyLogger, LogCategory
 DailyLogger().log(LogCategory.SYSTEM, f"SAT3 backend started (pid={os.getpid()})")
 
