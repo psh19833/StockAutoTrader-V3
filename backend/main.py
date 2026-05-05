@@ -56,7 +56,7 @@ DailyLogger().log(LogCategory.SYSTEM, f"SAT3 backend started (pid={os.getpid()})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -87,8 +87,25 @@ async def dashboard_market_regime():
 
 @app.get("/api/dashboard/ws-status")
 async def dashboard_ws_status():
-    from dashboard.dashboard_routes import handle_get_system
-    return {"connection_state": "DISCONNECTED", "subscribed_channels": []}
+    """WS status endpoint.
+
+    Safety phase behavior:
+    - If a ws status provider is not configured, return a safe UNKNOWN/DISCONNECTED-like status with reason.
+    - Never expose raw websocket frames or secrets.
+    """
+    try:
+        from dashboard.dashboard_routes import get_service
+
+        svc = get_service()
+        status = svc.get_ws_status()
+        return status
+    except Exception:
+        return {
+            "connection_state": "UNKNOWN",
+            "subscribed_channels": [],
+            "data_source": "fallback",
+            "status_reason": "ws_status_provider_not_configured",
+        }
 
 
 @app.get("/api/dashboard/candidates")
@@ -186,12 +203,28 @@ async def health():
     return {"status": "ok"}
 
 
+def _get_telegram_sender():
+    """Telegram sender factory.
+
+    - Default: RealTelegramSender()
+    - Tests MUST monkeypatch this to InMemoryTelegramSender to avoid real network.
+    """
+    from notifications.telegram_sender import RealTelegramSender
+
+    return RealTelegramSender()
+
+
 @app.post("/api/telegram/test")
 async def telegram_test(data: dict = {}):
-    """Telegram test endpoint. Dry-run by default, requires confirm to actually send."""
+    """Telegram test endpoint.
+
+    Safety rules:
+    - Dry-run by default
+    - Requires confirm to attempt send
+    - Tests must not perform real Telegram send; patch _get_telegram_sender.
+    """
     confirm = data.get("confirm", "") if data else ""
     from notifications.telegram_event import TelegramEvent, TelegramEventType, NotificationSeverity
-    from notifications.telegram_sender import RealTelegramSender
 
     event = TelegramEvent(
         event_type=TelegramEventType.SERVER_STARTED.value,
@@ -201,7 +234,7 @@ async def telegram_test(data: dict = {}):
     )
 
     if confirm == "SEND_TEST_TELEGRAM":
-        sender = RealTelegramSender()
+        sender = _get_telegram_sender()
         result = sender.send(event)
         return {
             "sent": result.success,

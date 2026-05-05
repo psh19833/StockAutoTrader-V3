@@ -17,8 +17,18 @@ SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset({
     "access_token", "access.token", "accesstoken",
     "refresh_token", "refresh.token", "refreshtoken",
     "approval_key", "approvalkey",
+    "telegram_bot_token", "telegrambottoken",
     "authorization",
     "secret", "api_secret", "api_key",
+})
+
+# Also treat common ENV var names as sensitive when they appear as keys.
+SENSITIVE_ENV_NAMES: frozenset[str] = frozenset({
+    "telegram_bot_token",
+    "telegrambottoken",
+    "telegram_bot_token".upper().lower(),
+    "kis_app_secret",
+    "kis_app_secret".upper().lower(),
 })
 
 # 계좌번호 패턴: 8자리 숫자-2자리 (예: 12345678-01)
@@ -85,9 +95,23 @@ def sanitize_value(key: str, value: Any, depth: int = 0) -> Any:
 
     key_lower = key.lower().replace(" ", "").replace(".", "_")
 
-    # dict: 재귀 처리
+    # If the key itself is a known sensitive/ENV name, redact the value early.
+    # (prevents secret-like values from leaking even if nested under unusual structures)
+    if key_lower in _normalize_field_names(key_lower) or key_lower in SENSITIVE_ENV_NAMES:
+        if isinstance(value, str):
+            return _mask_token(value)
+        return "[REDACTED]"
+
+    # dict: 재귀 처리 (민감 키는 제거)
     if isinstance(value, dict):
-        return {k: sanitize_value(k, v, depth + 1) for k, v in value.items()}
+        cleaned: dict[str, Any] = {}
+        for k, v in value.items():
+            k_norm = str(k).lower().replace(" ", "").replace(".", "_")
+            if k_norm in _normalize_field_names(k_norm) or k_norm in SENSITIVE_ENV_NAMES:
+                # Drop sensitive keys entirely so API/audit payloads don't even mention them.
+                continue
+            cleaned[k] = sanitize_value(str(k), v, depth + 1)
+        return cleaned
 
     # list: 각 항목 재귀 처리
     if isinstance(value, list):

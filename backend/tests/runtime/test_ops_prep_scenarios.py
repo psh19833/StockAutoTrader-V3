@@ -117,8 +117,10 @@ class TestScenarioH_AllPassedAutoStart:
             live_trading_enabled=True,
             safety_gate_approved=True,
         )
-        # In test: no real KIS call, mock result
-        assert r.success is True or "mock" in r.message.lower()
+        # In safety-hardening phase: even if SafetyGate passes, live submit must NOT
+        # return mock success unless a test-only submitter is explicitly injected.
+        assert r.success is False
+        assert "not configured" in r.message.lower() or "blocked" in r.message.lower()
 
 
 # ── Preflight script tests ───────────────────────────────────────────────────

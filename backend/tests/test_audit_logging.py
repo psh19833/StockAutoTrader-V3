@@ -342,8 +342,9 @@ class TestInMemoryAuditWriter:
         )
         writer.write(event)
         stored = writer.list_all()[0]
-        assert "secret123" not in stored.payload["appkey"]
-        assert "****" in stored.payload["appkey"]
+        # In safety-hardening: sensitive keys are dropped entirely.
+        assert "appkey" not in stored.payload
+        assert "secret123" not in str(stored.payload)
 
     def test_audit_event_to_dict(self):
         event = AuditEvent(

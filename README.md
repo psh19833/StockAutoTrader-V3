@@ -2,6 +2,20 @@
 
 > 실전 자동매매 운영 플랫폼 — 한국투자증권 Open API 단일 출처, 정량평가 중심, 급등주 단타 전략
 
+## 안전 보강 상태 (중요)
+- 본 프로젝트는 Dashboard / Telegram / Audit / 운영 문서 / SafetyGate 골격을 구축 중입니다.
+- 현재 시점에서 "실전 자동매매(LIVE)"는 live runner / KIS order submitter가 안전 보강 Phase로 분리되어 있으며, 기본 동작은 dry-run(합성/예시) 파이프라인입니다.
+- LIVE_TRADING_ENABLED=true 설정만으로 실전 주문이 실행되면 안 됩니다.
+- --confirm-live-order가 있어도 live runner가 NOT_READY/BLOCKED 상태이면 자동매매 시작(주문 제출)은 금지됩니다.
+
+### 실전 주문 가능(예정) 조건
+아래가 모두 충족되어야만 실전 주문 submit이 가능해야 합니다(현재 Phase에서는 미구현/차단).
+- 실제 KIS order submitter 구현 및 주입
+- LiveTradingRunner 준비(Scanner/Quant/Strategy/Risk/SafetyGate 연결 포함)
+- SafetyGate 통과
+- LIVE_TRADING_ENABLED=true 수동 설정
+- --confirm-live-order 명시
+
 ## 원칙
 
 - **실전 계좌 전용** — 모의투자/가상 잔고/시뮬레이션 없음

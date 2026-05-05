@@ -35,8 +35,8 @@ def test_dashboard_audit_detail_returns_sanitized_payload_and_checklist():
     assert detail["event_id"] == "evt_001"
     assert detail["checklist"] is not None
 
-    # sanitizer should mask secrets (exact mask pattern not asserted, only presence of ****)
+    # sanitizer should remove sensitive keys entirely
     payload = detail["payload_sanitized"]
-    assert "access_token" in payload
-    assert "****" in str(payload["access_token"])
+    assert "access_token" not in payload
+    assert "telegram_bot_token" not in str(payload)
     assert "checklist" in payload

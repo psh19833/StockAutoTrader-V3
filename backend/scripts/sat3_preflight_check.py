@@ -123,14 +123,23 @@ def main() -> int:
     except Exception as e:
         add("Order API guarded", False, str(e))
 
-    # ── WS client: no auto-connect ───────────────────────────────────────
+    # ── WS client: approval_key guard is enforced before any network ───────
     try:
         from kis.ws_client import GuardedRealWebSocketClient
         client = GuardedRealWebSocketClient()
-        add("WS real client requires approval_key", True,
-            "ValueError raised without approval_key")
-    except Exception:
-        add("WS real client requires approval_key", True, "import OK")
+        try:
+            client.connect(approval_key="", base_url="ws://dummy")
+            add("WS real client requires approval_key", False, "UNEXPECTED: connect succeeded")
+        except ValueError:
+            add("WS real client requires approval_key", True, "ValueError raised without approval_key")
+        except Exception as e:
+            add(
+                "WS real client requires approval_key",
+                False,
+                f"Unexpected exception: {type(e).__name__}: {e}",
+            )
+    except Exception as e:
+        add("WS real client requires approval_key", False, f"import/connect check failed: {e}")
 
     # ── Frontend ─────────────────────────────────────────────────────────
     fe_path = os.path.join(PROJECT_DIR, "frontend", "package.json")

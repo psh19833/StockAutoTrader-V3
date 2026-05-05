@@ -27,6 +27,7 @@ class FillReconciler:
     def __init__(self):
         self._ws_fills: dict[str, FillRecord] = {}
         self._rest_fills: dict[str, FillRecord] = {}
+        self._balance_confirmed: dict[str, bool] = {}
         self._confirmed_fills: dict[str, FillRecord] = {}
 
     def on_ws_fill_notice(self, symbol: str, order_number: str,
@@ -39,12 +40,41 @@ class FillReconciler:
         )
 
     def on_rest_fill_check(self, order_number: str, confirmed: bool) -> None:
-        """Confirm fill via REST fills API."""
-        if order_number in self._ws_fills:
+        """Confirm fill via REST fills API.
+
+        Note: REST fill confirmation alone is NOT enough.
+        We require balance/position snapshot confirmation too.
+        """
+        if order_number not in self._ws_fills:
+            return
+        record = self._ws_fills[order_number]
+        if confirmed:
+            record.status = "REST_FILL_CONFIRMED"
+            self._rest_fills[order_number] = record
+        self._try_finalize(order_number)
+
+    def on_rest_balance_check(self, order_number: str, reflected: bool) -> None:
+        """Confirm fill via REST balance/position snapshot.
+
+        reflected=True means the position/balance snapshot reflects the fill.
+        """
+        self._balance_confirmed[order_number] = bool(reflected)
+        self._try_finalize(order_number)
+
+    def _try_finalize(self, order_number: str) -> None:
+        ws_ok = order_number in self._ws_fills
+        rest_ok = order_number in self._rest_fills
+        bal_ok = self._balance_confirmed.get(order_number) is True
+
+        if ws_ok and rest_ok and bal_ok:
             record = self._ws_fills[order_number]
-            if confirmed:
-                record.status = "CONFIRMED"
-                self._confirmed_fills[order_number] = record
+            record.status = "CONFIRMED"
+            self._confirmed_fills[order_number] = record
+            return
+
+        if ws_ok and rest_ok and not bal_ok:
+            # Keep an explicit non-confirmed status until balance confirms.
+            self._ws_fills[order_number].status = "PENDING_BALANCE_CONFIRMATION"
 
     def is_confirmed(self, order_number: str) -> bool:
         return order_number in self._confirmed_fills

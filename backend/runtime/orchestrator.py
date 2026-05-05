@@ -7,6 +7,7 @@ from runtime.scheduler import Scheduler, SessionState
 from runtime.data_router import MarketDataRouter
 from runtime.market_cache import MarketCache
 from runtime.dry_decision_runner import DryDecisionRunner
+from runtime.live_trading_runner import LiveTradingRunner
 
 
 class Orchestrator:
@@ -16,7 +17,8 @@ class Orchestrator:
         self._scheduler = Scheduler()
         self._cache = MarketCache()
         self._router = MarketDataRouter(self._cache)
-        self._runner = DryDecisionRunner(self._router)
+        self._dry_runner = DryDecisionRunner(self._router)
+        self._live_runner = LiveTradingRunner(configured=False)
         self._state = "stopped"
         self._last_tick: Optional[str] = None
 
@@ -32,12 +34,17 @@ class Orchestrator:
     def router(self) -> MarketDataRouter:
         return self._router
 
-    def tick(self, session: SessionState) -> dict:
-        """Execute one tick for the given session state."""
+    def tick(self, session: SessionState, mode: str = "dry-run") -> dict:
+        """Execute one tick for the given session state.
+
+        mode:
+          - "dry-run": run synthetic pipeline (DryDecisionRunner)
+          - "live": run LiveTradingRunner skeleton (blocked unless configured)
+        """
         self._scheduler.set_session(session)
         plan = self._scheduler.get_task_plan()
         self._state = "running"
-        result = {"session": session.value, "plan": plan, "actions": []}
+        result = {"session": session.value, "plan": plan, "mode": mode, "actions": []}
 
         if "BLOCK_ALL" in plan:
             self._state = "stopped"
@@ -50,8 +57,27 @@ class Orchestrator:
         if "PREPARE_DATA" in plan:
             result["actions"].append("data_prepared")
         if "SCAN" in plan:
-            self._runner.run()
-            result["actions"].append("scanned")
+            if mode == "dry-run":
+                dry = self._dry_runner.run()
+                result["actions"].append("dry_run_scanned")
+                result["dry_run"] = {
+                    "mode": dry.get("mode"),
+                    "note": dry.get("note", ""),
+                    "counts": {
+                        "candidates": len(dry.get("candidates", []) or []),
+                        "scores": len(dry.get("scores", []) or []),
+                        "signals": len(dry.get("signals", []) or []),
+                        "risk_decisions": len(dry.get("risk_decisions", []) or []),
+                        "order_intents": len(dry.get("order_intents", []) or []),
+                    },
+                }
+            elif mode == "live":
+                live = self._live_runner.run_tick(session=session.value)
+                result["actions"].append("live_tick")
+                result["live"] = live.to_dict()
+            else:
+                result["actions"].append("invalid_mode")
+                result["error"] = "INVALID_MODE"
         if "EOD_REPORT" in plan:
             result["actions"].append("eod_reported")
         self._state = "idle"

@@ -30,6 +30,7 @@ class DashboardService:
         self._audit_events: list[AuditTimelineView] = []
         self._audit_event_payloads: dict[str, dict[str, Any]] = {}
         self._audit_repo = None
+        self._ws_status_provider = None
 
     # ── 데이터 주입 (Stub 용) ──
 
@@ -53,6 +54,45 @@ class DashboardService:
 
     def set_audit_repository(self, repo) -> None:
         self._audit_repo = repo
+
+    def set_ws_status_provider(self, provider) -> None:
+        """Inject a runtime ws status provider.
+
+        Provider must return sanitized status dict (no secrets, no raw frames).
+        """
+        self._ws_status_provider = provider
+
+    def get_ws_status(self) -> dict:
+        """Return websocket connection status for dashboard.
+
+        If provider is missing, return safe status + reason.
+        """
+        if self._ws_status_provider is None:
+            return {
+                "connection_state": "UNKNOWN",
+                "subscribed_channels": [],
+                "data_source": "default",
+                "status_reason": "ws_status_provider_not_configured",
+            }
+        try:
+            status = self._ws_status_provider.get_status()
+            if not isinstance(status, dict):
+                return {
+                    "connection_state": "UNKNOWN",
+                    "subscribed_channels": [],
+                    "data_source": "provider",
+                    "status_reason": "ws_status_provider_invalid_return",
+                }
+            status.setdefault("subscribed_channels", [])
+            status.setdefault("data_source", "provider")
+            return status
+        except Exception as e:
+            return {
+                "connection_state": "UNKNOWN",
+                "subscribed_channels": [],
+                "data_source": "provider",
+                "status_reason": f"provider_error:{type(e).__name__}",
+            }
 
     def _timeline_view_from_repo_row(self, row: dict[str, Any]) -> AuditTimelineView:
         """Convert repository row -> AuditTimelineView."""

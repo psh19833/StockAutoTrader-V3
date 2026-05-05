@@ -88,7 +88,7 @@ def run_dry_run() -> None:
     from runtime.orchestrator import Orchestrator
     from runtime.scheduler import SessionState
     orch = Orchestrator()
-    result = orch.tick(SessionState.REGULAR_MARKET)
+    result = orch.tick(SessionState.REGULAR_MARKET, mode="dry-run")
     print(f"Plan: {result['plan']}")
     print(f"Actions: {result['actions']}")
     live = os.getenv("LIVE_TRADING_ENABLED", "false").lower()
@@ -139,7 +139,7 @@ def run_confirm(args: argparse.Namespace) -> None:
 
 
 def run_start(args: argparse.Namespace) -> None:
-    banner("Step 9: Start Automated Trading")
+    banner("Step 9: Live Trading Start (Safety Phase)")
     live = os.getenv("LIVE_TRADING_ENABLED", "false").lower()
     if live != "true":
         print("[BLOCKED] LIVE_TRADING_ENABLED is not true.")
@@ -147,27 +147,40 @@ def run_start(args: argparse.Namespace) -> None:
     if not args.confirm_live_order:
         print("[BLOCKED] --confirm-live-order required.")
         return
-    print("[INFO] Starting automated trading...")
+    print("[INFO] Starting LIVE mode tick (safety phase)...")
+    print("[INFO] No real order submitted in this Phase.")
+
     from runtime.orchestrator import Orchestrator
     from runtime.scheduler import SessionState
     orch = Orchestrator()
-    start_time = time.time()
-    max_seconds = (args.max_runtime_minutes or 0) * 60
 
     try:
-        result = orch.tick(SessionState.REGULAR_MARKET)
-        print(f"Tick result: {result}")
-        while not args.once:
-            time.sleep(5)
-            elapsed = time.time() - start_time
-            if max_seconds and elapsed > max_seconds:
-                print(f"[INFO] Max runtime ({args.max_runtime_minutes}m) reached.")
-                break
+        result = orch.tick(SessionState.REGULAR_MARKET, mode="live")
+        live_result = result.get("live", {})
+        status = (live_result or {}).get("status", "")
+        reason = (live_result or {}).get("reason", "")
+        print(f"Tick result: mode=live status={status} reason={reason}")
+
+        if status in ("BLOCKED_NOT_CONFIGURED", "BLOCKED_NOT_IMPLEMENTED"):
+            print("[BLOCKED] LIVE_TRADING_RUNNER_NOT_READY / submitter not configured")
+            print("          Dry-run pipeline is NOT live trading.")
+            return
+
+        # Placeholder monitor loop (should not imply trading is running)
+        if not args.once:
+            print("[INFO] Monitor loop placeholder (no trading loop implemented). Press Ctrl+C to exit.")
+            start_time = time.time()
+            max_seconds = (args.max_runtime_minutes or 0) * 60
+            while True:
+                time.sleep(5)
+                if max_seconds and (time.time() - start_time) > max_seconds:
+                    print(f"[INFO] Max runtime ({args.max_runtime_minutes}m) reached.")
+                    break
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted. Stopping.")
     finally:
         orch.stop()
-        print("[OK] Trading stopped.")
+        print("[OK] Runner stopped.")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

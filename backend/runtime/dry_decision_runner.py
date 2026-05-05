@@ -58,6 +58,14 @@ class DryDecisionRunner:
         Returns:
             dict with candidates, scores, signals, risk_decisions, order_intents.
         """
+        # Reset per-run to avoid accumulating synthetic results across ticks.
+        self._candidates = []
+        self._scores = []
+        self._signals = []
+        self._risk_decisions = []
+        self._order_intents = []
+        self._audit_events = []
+
         targets = symbols or ["005930", "000660", "035720"]
         tradable = [s for s in targets if is_tradable_stock(s)]
 
@@ -67,6 +75,8 @@ class DryDecisionRunner:
                 "symbol": symbol,
                 "scanner_type": "DRY_RUN",
                 "included": True,
+                "mode": "DRY_RUN",
+                "synthetic": True,
             })
 
         # Phase 2: Quant evaluation
@@ -77,6 +87,8 @@ class DryDecisionRunner:
                 "final_score": 0.75,
                 "liquidity_score": 0.8,
                 "momentum_score": 0.7,
+                "mode": "DRY_RUN",
+                "synthetic": True,
             }
             self._scores.append(score)
             self._audit_events.append({"event_type": "QUANT_EVALUATED", "symbol": c["symbol"]})
@@ -89,6 +101,8 @@ class DryDecisionRunner:
                     "side": "BUY",
                     "strategy_type": "RAPID_SURGE",
                     "confidence": s["final_score"],
+                    "mode": "DRY_RUN",
+                    "synthetic": True,
                 }
                 self._signals.append(signal)
                 self._audit_events.append({"event_type": "STRATEGY_SIGNAL_CREATED", "symbol": s["symbol"]})
@@ -100,7 +114,9 @@ class DryDecisionRunner:
                 "side": sig["side"],
                 "allowed": True,
                 "reason_code": "DRY_RUN_APPROVED",
-                "reason_text": "Dry run — no real order",
+                "reason_text": "Dry run synthetic — no real order",
+                "mode": "DRY_RUN",
+                "synthetic": True,
             }
             self._risk_decisions.append(decision)
             self._audit_events.append({"event_type": "RISK_APPROVED", "symbol": sig["symbol"]})
@@ -114,10 +130,14 @@ class DryDecisionRunner:
                     "qty": 1,
                     "submitted": False,
                     "blocked_reason": "LIVE_TRADING_ENABLED=false",
+                    "mode": "DRY_RUN",
+                    "synthetic": True,
                 }
                 self._order_intents.append(intent)
 
         return {
+            "mode": "DRY_RUN",
+            "note": "dry-run synthetic pipeline; no real order submission",
             "candidates": list(self._candidates),
             "scores": list(self._scores),
             "signals": list(self._signals),
