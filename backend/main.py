@@ -93,6 +93,42 @@ async def dashboard_audit(limit: int = 50):
     return handle_get_audit_timeline(limit)
 
 
+@app.get("/api/dashboard/telegram-status")
+async def telegram_status():
+    from dashboard.dashboard_routes import handle_get_telegram_status
+    return handle_get_telegram_status()
+
+
+@app.get("/api/dashboard/kis-account")
+async def kis_account():
+    from dashboard.dashboard_routes import handle_get_kis_account
+    return handle_get_kis_account()
+
+
+@app.get("/api/dashboard/daily-summary")
+async def daily_summary(date: str = ""):
+    from dashboard.dashboard_routes import handle_get_daily_summary
+    return handle_get_daily_summary(date)
+
+
+@app.get("/api/dashboard/strategy-breakdown")
+async def strategy_breakdown(date: str = ""):
+    from dashboard.dashboard_routes import handle_get_strategy_breakdown
+    return handle_get_strategy_breakdown(date)
+
+
+@app.get("/api/dashboard/logs")
+async def dashboard_logs(date: str = "", category: str = "system", max_lines: int = 100):
+    from dashboard.dashboard_routes import handle_get_logs
+    return handle_get_logs(date, category, max_lines)
+
+
+@app.get("/api/dashboard/log-dates")
+async def log_dates():
+    from dashboard.dashboard_routes import handle_get_log_dates
+    return handle_get_log_dates()
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

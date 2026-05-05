@@ -162,6 +162,65 @@ class DataRouterStatusView:
 
 
 @dataclass(frozen=True)
+class TelegramStatusView:
+    """Telegram 봇 연결 상태 (로컬 대시보드 — chat_id 전체 표시)."""
+    connected: bool = False
+    bot_name: str = ""
+    chat_id: str = ""
+    last_message_at: str = ""
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class KisAccountView:
+    """KIS 계좌 정보 (로컬 대시보드 — 계좌번호 전체 표시)."""
+    account_no: str = ""
+    product_code: str = "01"
+    deposit: int = 0
+    total_value: int = 0
+    total_buy_amount: int = 0
+    holding_count: int = 0
+    d2_deposit: int = 0
+    stale: bool = True
+
+
+@dataclass(frozen=True)
+class DailySummaryView:
+    """일별 매매 요약."""
+    date: str = ""
+    total_trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    win_rate: float = 0.0
+    realized_pnl: int = 0
+    unrealized_pnl: int = 0
+    profit_factor: float = 0.0
+    max_drawdown_pct: float = 0.0
+    avg_hold_minutes: float = 0.0
+    total_commission: int = 0
+
+
+@dataclass(frozen=True)
+class StrategyBreakdownView:
+    """전략별 성과 breakdown."""
+    strategy: str = ""
+    trades: int = 0
+    win_rate: float = 0.0
+    total_pnl: int = 0
+    avg_pnl: float = 0.0
+
+
+@dataclass(frozen=True)
+class LogEntryView:
+    """로그 항목 (날짜/카테고리별)."""
+    date: str = ""
+    category: str = ""
+    lines: list[str] = field(default_factory=list)
+    available_dates: list[str] = field(default_factory=list)
+    available_categories: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class DashboardSummary:
     system: SystemStatusView
     session: SessionStatusView
