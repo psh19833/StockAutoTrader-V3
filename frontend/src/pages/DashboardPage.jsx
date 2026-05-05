@@ -6,6 +6,7 @@ import MarketRegimeCard from "../components/dashboard/MarketRegimeCard";
 import WebSocketStatusCard from "../components/dashboard/WebSocketStatusCard";
 import DataRouterStatusCard from "../components/dashboard/DataRouterStatusCard";
 import DataQualityWarningsCard from "../components/dashboard/DataQualityWarningsCard";
+import DateTimeCard from "../components/dashboard/DateTimeCard";
 import TelegramStatusCard from "../components/dashboard/TelegramStatusCard";
 import KisAccountCard from "../components/dashboard/KisAccountCard";
 import DailySummaryCard from "../components/dashboard/DailySummaryCard";
@@ -38,6 +39,7 @@ export default function DashboardPage() {
 
       {/* Row 1: Status Cards */}
       <div className="cards">
+        <DateTimeCard />
         <SystemStatusCard data={data.system} />
         <SessionStatusCard data={data.session} />
         <MarketRegimeCard data={data.market_regime} />
