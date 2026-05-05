@@ -147,15 +147,16 @@ def _send_telegram_startup() -> None:
 
 def start_backend() -> bool:
     global _backend_proc
+
+    # Telegram notification — always send on start attempt
+    _send_telegram_startup()
+
     if _port_is_open(_BACKEND_PORT):
         print(f"  Backend already running on port {_BACKEND_PORT}")
         return True
     _ensure_logs_dir()
     log_path = _LOGS_DIR / _LOG_BACKEND
     venv_python = str(_PROJECT_ROOT / ".venv" / "bin" / "python")
-
-    # Telegram startup notification
-    _send_telegram_startup()
 
     print(f"  Starting backend: uvicorn main:app --host 127.0.0.1 --port {_BACKEND_PORT}")
     _log("start_backend: starting...")
