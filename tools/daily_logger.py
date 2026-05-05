@@ -32,7 +32,7 @@ class LogCategory(str, Enum):
 _SECRET_FILTERS = ["appkey=", "appsecret=", "access_token=", "approval_key=",
                    "APP_KEY=", "APP_SECRET=", "ACCESS_TOKEN=", "APPROVAL_KEY="]
 
-_LOGS_ROOT = Path(__file__).resolve().parents[2] / "logs"
+_LOGS_ROOT = Path(__file__).resolve().parents[1] / "logs"
 
 
 def _filter_secrets(line: str) -> str:
