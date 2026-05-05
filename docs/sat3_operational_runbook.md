@@ -1,12 +1,18 @@
 # SAT3 Operational Runbook
 
 > SAT3 실전 운용 매뉴얼
-> 마지막 수정: 2026-05-05
-> 상태: N18 완료, OPS-2 완료, 실전매매 대기
+> 마지막 수정: 2026-05-06
+> 상태: CONDITIONALLY_READY (실전매매 전환 대기)
 
 ---
 
 ## 1. 시스템 개요
+
+### 테스트 기준 (Canonical)
+- backend 테스트 기준 명령:
+  - `cd backend && ../.venv/bin/python -m pytest -q`
+- 현재 기준 결과: `1273 passed`
+- root pytest 직접 실행 결과는 운영 판정 기준으로 사용하지 않는다.
 
 SAT3(StockAutoTrader V3)는 한국투자증권(KIS) Open API 기반 실전 자동매매 시스템이다.
 

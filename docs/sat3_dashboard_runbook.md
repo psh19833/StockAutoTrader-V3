@@ -1,5 +1,8 @@
 # SAT3 Dashboard Runbook
 
+> 상태: CONDITIONALLY_READY
+> 목적: 조회전용 상태 확인 (주문/실행 제어 없음)
+
 ## 실행
 
 ```bash
@@ -17,12 +20,12 @@ Open http://localhost:5173
 
 | 카드 | 확인 항목 |
 |------|-----------|
-| System Status | LIVE_TRADING_ENABLED=false, Emergency Stop inactive |
-| Session Status | REGULAR_MARKET, Buy Allowed=Yes |
-| Market Regime | BULL/NEUTRAL/BEAR, New Buy Allowed |
-| WebSocket Status | CONNECTED, subscribed channels 표시 |
-| Data Router | Source=REST/WS, WS Connected |
-| Data Quality | Warning 없음 |
+| System Status | LIVE_TRADING_ENABLED=false(기본), Emergency Stop inactive |
+| Session Status | 기본 UNKNOWN + Buy Allowed=No (소스 주입 시 변경) |
+| Market Regime | 기본 UNKNOWN + New Buy Allowed=No (소스 주입 시 변경) |
+| WebSocket Status | provider 미연결 시 UNKNOWN + reason 확인 |
+| Data Router | Source/연결 상태 확인 |
+| Data Quality | warning 존재 시 원인 확인 |
 | Scanner Candidates | 종목/Scanner/Included/Reason |
 | Quant Scores | PASS/WATCH/REJECT 카운트 |
 | Risk Decisions | Symbol/Side/Allowed/Reason |

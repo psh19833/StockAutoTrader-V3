@@ -2,11 +2,18 @@
 
 > 실전 자동매매 운영 플랫폼 — 한국투자증권 Open API 단일 출처, 정량평가 중심, 급등주 단타 전략
 
-## 안전 보강 상태 (중요)
-- 본 프로젝트는 Dashboard / Telegram / Audit / 운영 문서 / SafetyGate 골격을 구축 중입니다.
-- 현재 시점에서 "실전 자동매매(LIVE)"는 live runner / KIS order submitter가 안전 보강 Phase로 분리되어 있으며, 기본 동작은 dry-run(합성/예시) 파이프라인입니다.
-- LIVE_TRADING_ENABLED=true 설정만으로 실전 주문이 실행되면 안 됩니다.
-- --confirm-live-order가 있어도 live runner가 NOT_READY/BLOCKED 상태이면 자동매매 시작(주문 제출)은 금지됩니다.
+## 현재 운영 상태 (중요)
+- 현재 상태: CONDITIONALLY_READY
+- 본 프로젝트는 Dashboard / Telegram / Audit / SafetyGate / 운영 문서 정합화를 완료 중입니다.
+- 실전 자동매매는 "조건 충족 시에만" 허용됩니다. LIVE_TRADING_ENABLED=true 단독으로는 주문이 실행되면 안 됩니다.
+- --confirm-live-order가 있어도 SafetyGateResult 체인/실전 게이트 조건이 충족되지 않으면 주문 제출은 금지됩니다.
+- 기본 안전 원칙: 주문 접수(ORDER_SUBMITTED)와 체결 확정(FILL_CONFIRMED)은 명확히 구분합니다.
+
+### 테스트 기준 (Canonical)
+- backend 테스트 기준 명령:
+  - `cd backend && ../.venv/bin/python -m pytest -q`
+- 현재 기준 결과: `1273 passed`
+- root pytest 직접 실행은 기준값으로 사용하지 않습니다.
 
 ### 실전 주문 가능(예정) 조건
 아래가 모두 충족되어야만 실전 주문 submit이 가능해야 합니다(현재 Phase에서는 미구현/차단).

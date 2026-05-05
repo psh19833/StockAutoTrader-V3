@@ -1,13 +1,15 @@
 # SAT3 Operation Index
 
 > 전체 운영 문서 목록 및 상황별 참조
+> 상태: CONDITIONALLY_READY
+> 테스트 기준: `cd backend && ../.venv/bin/python -m pytest -q` (현재 1273 passed)
 
 ## 운영 문서 목록
 
 | 문서 | 내용 |
 |------|------|
 | [sat3_operational_runbook.md](sat3_operational_runbook.md) | 시스템 개요, 파이프라인, 9단계 운용 절차 |
-| [sat3_market_open_runbook.md](sat3_market_open_runbook.md) | 개장일 타임라인, 즉시 자동매매 시작 조건 |
+| [sat3_market_open_runbook.md](sat3_market_open_runbook.md) | 개장일 타임라인, 조건부 실전 전환 조건/증적 템플릿 |
 | [sat3_ops_prep.md](sat3_ops_prep.md) | 개장일 간략 체크리스트 |
 | [sat3_dashboard_runbook.md](sat3_dashboard_runbook.md) | Dashboard 실행/확인 방법 |
 | [sat3_emergency_stop.md](sat3_emergency_stop.md) | 비상정지 절차 |
