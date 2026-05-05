@@ -163,25 +163,31 @@ def handle_get_kis_account() -> dict[str, Any]:
         bal_resp = urllib.request.urlopen(bal_req, timeout=10)
         bal_data = json.loads(bal_resp.read().decode())
 
-        if bal_data.get("rt_cd") == "0" and "output1" in bal_data:
-            out1 = bal_data["output1"]
-            deposit = int(out1.get("dnca_tot_amt", "0") or "0")
-            total_value = int(out1.get("tot_evlu_amt", "0") or "0")
-            buy_amount = int(out1.get("pchs_amt", "0") or "0")
+        if bal_data.get("rt_cd") == "0":
+            # output1 can be dict or list (KIS inconsistency)
+            out1_raw = bal_data.get("output1", {})
+            if isinstance(out1_raw, list) and len(out1_raw) > 0:
+                out1 = out1_raw[0]
+            elif isinstance(out1_raw, dict):
+                out1 = out1_raw
+            else:
+                out1 = {}
 
-            # Count holdings from output2
+            deposit = int(str(out1.get("dnca_tot_amt", "0") or "0"))
+            total_value = int(str(out1.get("tot_evlu_amt", "0") or "0"))
+            buy_amount = int(str(out1.get("pchs_amt", "0") or "0"))
+            d2 = int(str(out1.get("d2_auto_rdpt_amt", "0") or "0"))
+
             holdings = 0
-            if "output2" in bal_data and isinstance(bal_data["output2"], list):
-                holdings = len(bal_data["output2"])
+            out2 = bal_data.get("output2", [])
+            if isinstance(out2, list):
+                holdings = len(out2)
 
             return _to_dict(KisAccountView(
-                account_no=acc,
-                product_code=prod,
-                deposit=deposit,
-                total_value=total_value,
+                account_no=acc, product_code=prod,
+                deposit=deposit, total_value=total_value,
                 total_buy_amount=buy_amount,
-                holding_count=holdings,
-                d2_deposit=int(out1.get("d2_auto_rdpt_amt", "0") or "0"),
+                holding_count=holdings, d2_deposit=d2,
                 stale=False,
             ))
 
