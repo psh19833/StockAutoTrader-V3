@@ -113,11 +113,11 @@ class TelegramEvent:
 
     @property
     def formatted_message(self) -> str:
-        """Telegram 전송용 완전한 문자열 메시지"""
+        """Telegram 전송용 완전한 문자열 메시지 (HTML)"""
         level_icon = {
             "CRITICAL": "🚨",
             "HIGH": "⚠️",
             "NORMAL": "ℹ️",
             "LOW": "🔹",
         }.get(self.notification_severity.value, "📋")
-        return f"{level_icon} *{self.title}*\n{self.body}"
+        return f"{level_icon} <b>{self.title}</b>\n{self.body}"

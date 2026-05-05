@@ -135,8 +135,8 @@ def _send_telegram_startup() -> None:
             return
         body = json.dumps({
             "chat_id": chat_id,
-            "text": "ℹ️ *🚀 SAT3 서버 시작*\nSAT3 백엔드 서버가 시작되었습니다.",
-            "parse_mode": "Markdown",
+            "text": "ℹ️ <b>🚀 SAT3 서버 시작</b>\nSAT3 백엔드 서버가 시작되었습니다.",
+            "parse_mode": "HTML",
         }).encode()
         req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body, method="POST")
         req.add_header("Content-Type", "application/json")

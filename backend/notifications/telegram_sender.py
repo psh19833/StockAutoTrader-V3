@@ -103,7 +103,7 @@ class RealTelegramSender(TelegramSender):
             body = json.dumps({
                 "chat_id": self._chat_id,
                 "text": event.formatted_message,
-                "parse_mode": "Markdown",
+                "parse_mode": "HTML",
             }).encode("utf-8")
             req = urllib.request.Request(url, data=body, method="POST")
             req.add_header("Content-Type", "application/json")
