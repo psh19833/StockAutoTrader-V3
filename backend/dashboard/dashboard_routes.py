@@ -198,6 +198,7 @@ def handle_get_kis_account() -> dict[str, Any]:
     except Exception as e:
         return _to_dict(KisAccountView(
             account_no=acc, product_code=prod, stale=True,
+            deposit=-1,  # -1 = error marker
         ))
 
 

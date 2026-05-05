@@ -18,7 +18,8 @@ export default function KisAccountCard() {
       <p>매수금액: ₩{fmt(data.total_buy_amount)}</p>
       <p>보유종목: {data.holding_count}개</p>
       <p>D+2: ₩{fmt(data.d2_deposit)}</p>
-      {data.stale && <p className="warn">데이터 갱신 필요</p>}
+      {data.stale && data.deposit === -1 && <p className="danger">KIS API 연결 실패 (휴장일 또는 네트워크 오류)</p>}
+      {data.stale && data.deposit !== -1 && <p className="warn">데이터 갱신 필요</p>}
     </div>
   );
 }
