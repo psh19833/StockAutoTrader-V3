@@ -18,6 +18,53 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="SAT3 Dashboard API", version="3.0.0")
 
+
+@app.on_event("startup")
+async def startup_notify():
+    """서버 시작 시 Telegram 알림 + 로그 기록."""
+    try:
+        from notifications.telegram_event import TelegramEvent, TelegramEventType, NotificationSeverity
+        from notifications.telegram_sender import RealTelegramSender
+        from tools.daily_logger import DailyLogger, LogCategory
+
+        event = TelegramEvent(
+            event_type=TelegramEventType.SERVER_STARTED.value,
+            title="🚀 SAT3 서버 시작",
+            body="SAT3 백엔드 서버가 시작되었습니다.",
+            notification_severity=NotificationSeverity.NORMAL,
+        )
+        sender = RealTelegramSender()
+        sender.send(event)
+
+        logger = DailyLogger()
+        logger.log(LogCategory.SYSTEM, "SERVER_STARTED: SAT3 backend started")
+    except Exception:
+        pass
+
+
+@app.on_event("shutdown")
+async def shutdown_notify():
+    """서버 중지 시 Telegram 알림 + 로그 기록."""
+    try:
+        from notifications.telegram_event import TelegramEvent, TelegramEventType, NotificationSeverity
+        from notifications.telegram_sender import RealTelegramSender
+        from tools.daily_logger import DailyLogger, LogCategory
+
+        event = TelegramEvent(
+            event_type=TelegramEventType.SERVER_STOPPED.value,
+            title="🛑 SAT3 서버 중지",
+            body="SAT3 백엔드 서버가 중지되었습니다.",
+            notification_severity=NotificationSeverity.HIGH,
+        )
+        sender = RealTelegramSender()
+        sender.send(event)
+
+        logger = DailyLogger()
+        logger.log(LogCategory.SYSTEM, "SERVER_STOPPED: SAT3 backend stopped")
+    except Exception:
+        pass
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
