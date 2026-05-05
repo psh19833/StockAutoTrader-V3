@@ -2,14 +2,22 @@
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS audit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT,
+    event_time TEXT,
     event_type TEXT NOT NULL,
     correlation_id TEXT,
     symbol TEXT,
     severity TEXT DEFAULT 'INFO',
     payload TEXT DEFAULT '{}',
     source TEXT DEFAULT '',
+    strategy_name TEXT DEFAULT '',
+    status TEXT DEFAULT '',
+    summary TEXT DEFAULT '',
+    has_checklist INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_event_id ON audit_events(event_id);
+CREATE INDEX IF NOT EXISTS idx_audit_event_time ON audit_events(event_time);
 CREATE INDEX IF NOT EXISTS idx_audit_correlation ON audit_events(correlation_id);
 CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(event_type);
 

@@ -119,18 +119,20 @@ class EodReportView:
 
 @dataclass(frozen=True)
 class AuditTimelineView:
-    # Minimal fields (existing)
+    # Minimal fields
     event_type: str
     correlation_id: str
     symbol: str
-    timestamp: str
+    timestamp: str  # kept for backward compatibility (event_time)
 
     # Extended fields for UI (safe defaults)
     event_id: str = ""
     severity: str = "INFO"
+    source: str = ""
     strategy_name: str = ""
     status: str = ""
     summary: str = ""
+    has_checklist: bool = False
 
 
 @dataclass(frozen=True)

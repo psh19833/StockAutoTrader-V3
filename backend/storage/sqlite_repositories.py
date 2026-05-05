@@ -18,29 +18,97 @@ class SqliteAuditEventRepository:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
 
+    def _derive_status_summary(self, clean: dict) -> tuple[str, str, int]:
+        """Derive status/summary/has_checklist from payload (best-effort)."""
+        payload = clean.get("payload") if isinstance(clean.get("payload"), dict) else {}
+        has_checklist = 1 if isinstance(payload.get("checklist"), dict) else 0
+
+        status = str(clean.get("status", "") or "")
+        summary = str(clean.get("summary", "") or "")
+
+        if not summary:
+            for k in ("reason_text", "reason_code", "excluded_reason"):
+                if k in payload and payload.get(k):
+                    summary = str(payload.get(k))
+                    break
+
+        if not status and has_checklist:
+            items = payload.get("checklist", {}).get("items", [])
+            worst = "INFO"
+            for it in items if isinstance(items, list) else []:
+                s = (it or {}).get("status")
+                if s == "FAIL":
+                    worst = "FAIL"; break
+                if s == "WARN" and worst not in ("FAIL", "WARN"):
+                    worst = "WARN"
+                if s == "PASS" and worst == "INFO":
+                    worst = "PASS"
+            status = worst
+
+        return status, summary, has_checklist
+
     def save(self, data: dict) -> int:
         clean = sanitize_for_storage(data)
+        status, summary, has_checklist = self._derive_status_summary(clean)
+
+        # Ensure event_id/event_time exist (tests and legacy callers may omit them)
+        event_id = str(clean.get("event_id", "") or "")
+        if not event_id:
+            import uuid
+            event_id = uuid.uuid4().hex[:16]
+
+        event_time = str(clean.get("event_time", "") or "")
+        if not event_time:
+            from datetime import datetime, timezone
+            event_time = datetime.now(timezone.utc).isoformat()
+
+        payload_obj = clean.get("payload", {})
+        payload_json = (
+            json.dumps(payload_obj) if isinstance(payload_obj, dict)
+            else str(payload_obj or "{}")
+        )
+
         cur = self._conn.execute(
-            "INSERT INTO audit_events (event_type, correlation_id, symbol, severity, payload) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (clean.get("event_type", ""), clean.get("correlation_id", ""),
-             clean.get("symbol", ""), clean.get("severity", "INFO"),
-             json.dumps(clean.get("payload", {})) if isinstance(clean.get("payload"), dict)
-             else str(clean.get("payload", "{}"))),
+            "INSERT INTO audit_events (event_id, event_time, event_type, correlation_id, symbol, "
+            "severity, payload, source, strategy_name, status, summary, has_checklist) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event_id,
+                event_time,
+                clean.get("event_type", ""),
+                clean.get("correlation_id", ""),
+                clean.get("symbol", ""),
+                clean.get("severity", "INFO"),
+                payload_json,
+                clean.get("source", ""),
+                clean.get("strategy_name", ""),
+                status,
+                summary,
+                has_checklist,
+            ),
         )
         self._conn.commit()
         return cur.lastrowid or 0
 
     def list_all(self, limit: int = 50) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT * FROM audit_events ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM audit_events ORDER BY COALESCE(event_time, created_at) DESC, id DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return _rows_to_list(rows)
 
-    def find_by_correlation(self, correlation_id: str) -> list[dict]:
+    def get_by_event_id(self, event_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM audit_events WHERE event_id = ? LIMIT 1",
+            (event_id,),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def find_by_correlation(self, correlation_id: str, limit: int = 200) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT * FROM audit_events WHERE correlation_id = ? ORDER BY id",
-            (correlation_id,)
+            "SELECT * FROM audit_events WHERE correlation_id = ? "
+            "ORDER BY COALESCE(event_time, created_at) ASC, id ASC LIMIT ?",
+            (correlation_id, limit)
         ).fetchall()
         return _rows_to_list(rows)
 

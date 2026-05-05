@@ -16,6 +16,32 @@ except ImportError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# ─────────────────────────────────────────────────────────────
+# Audit Repository (SQLite) for LIVE Timeline
+# - Dashboard는 조회 전용이며, 저장은 audit_logging 쪽에서 수행
+# - 운영에서는 파일 DB 사용, 테스트/개발은 :memory: 사용 가능
+# ─────────────────────────────────────────────────────────────
+try:
+    import sqlite3
+    from storage.database import init_db
+    from storage.sqlite_repositories import SqliteAuditEventRepository
+    from dashboard.dashboard_routes import get_service as _get_dashboard_service
+
+    _db_path = os.getenv("SAT3_AUDIT_DB_PATH", "")
+    if not _db_path:
+        _data_dir = Path(__file__).resolve().parents[1] / "data"
+        _data_dir.mkdir(parents=True, exist_ok=True)
+        _db_path = str(_data_dir / "sat3_audit.db")
+
+    _audit_conn = sqlite3.connect(_db_path, check_same_thread=False)
+    _audit_conn.row_factory = sqlite3.Row
+    init_db(_audit_conn)
+    _audit_repo = SqliteAuditEventRepository(_audit_conn)
+    _get_dashboard_service().set_audit_repository(_audit_repo)
+except Exception:
+    # Repository initialization failure must not prevent dashboard from starting.
+    pass
+
 app = FastAPI(title="SAT3 Dashboard API", version="3.0.0")
 
 # Startup log — add project root to path for tools import

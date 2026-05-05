@@ -2,21 +2,41 @@ import React, { useEffect, useState } from "react";
 import { fetchAuditTimeline } from "../../api/dashboardApi";
 
 function rowKey(e, idx) {
-  return e.event_id || `${e.correlation_id || ""}-${e.timestamp || ""}-${idx}`;
+  const t = e.event_time || e.timestamp || "";
+  return e.event_id || `${e.correlation_id || ""}-${t}-${idx}`;
 }
 
 export default function AuditTimelineList({ onSelectEvent, selectedEventId }) {
   const [events, setEvents] = useState([]);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetchAuditTimeline(50)
-      .then(setEvents)
-      .catch(setError);
-    const interval = setInterval(() => {
-      fetchAuditTimeline(50).then(setEvents).catch(setError);
-    }, 5000);
-    return () => clearInterval(interval);
+    let mounted = true;
+    const load = () => {
+      setLoading(true);
+      return fetchAuditTimeline(50)
+        .then((rows) => {
+          if (!mounted) return;
+          setEvents(rows || []);
+          setError(null);
+        })
+        .catch((e) => {
+          if (!mounted) return;
+          setError(e);
+        })
+        .finally(() => {
+          if (!mounted) return;
+          setLoading(false);
+        });
+    };
+
+    load();
+    const interval = setInterval(load, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   if (error) {
@@ -34,6 +54,14 @@ export default function AuditTimelineList({ onSelectEvent, selectedEventId }) {
       <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
         클릭하면 상세 패널 + Evidence Checklist 표시
       </div>
+      {loading ? (
+        <div className="loading" style={{ fontSize: 12, opacity: 0.8 }}>불러오는 중...</div>
+      ) : null}
+
+      {(events || []).length === 0 && !loading ? (
+        <div style={{ fontSize: 12, opacity: 0.8 }}>이벤트가 없습니다.</div>
+      ) : null}
+
       <div style={{ overflowX: "auto" }}>
         <table className="table" style={{ width: "100%", minWidth: 900 }}>
           <thead>
@@ -61,7 +89,7 @@ export default function AuditTimelineList({ onSelectEvent, selectedEventId }) {
                     onSelectEvent && onSelectEvent(e.event_id);
                   }}
                 >
-                  <td>{e.timestamp || ""}</td>
+                  <td>{e.event_time || e.timestamp || ""}</td>
                   <td>{e.severity || "INFO"}</td>
                   <td>{e.event_type || ""}</td>
                   <td>{e.symbol || ""}</td>

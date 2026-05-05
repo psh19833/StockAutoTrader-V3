@@ -84,7 +84,27 @@ def handle_get_eod_latest() -> dict[str, Any] | None:
 
 
 def handle_get_audit_timeline(limit: int = 50) -> list[dict[str, Any]]:
-    return [_to_dict(e) for e in get_service().get_audit_timeline(limit)]
+    """Live timeline list.
+
+    Returns fields required by SAT3-AUDIT-LIVE-TIMELINE spec.
+    """
+    items: list[dict[str, Any]] = []
+    for e in get_service().get_audit_timeline(limit):
+        # AuditTimelineView -> response dict
+        items.append({
+            "event_id": e.event_id,
+            "event_time": e.timestamp,
+            "event_type": e.event_type,
+            "severity": e.severity,
+            "source": e.source,
+            "symbol": e.symbol,
+            "strategy_name": e.strategy_name,
+            "status": e.status,
+            "summary": e.summary,
+            "correlation_id": e.correlation_id,
+            "has_checklist": bool(getattr(e, "has_checklist", False)),
+        })
+    return items
 
 
 def handle_get_audit_by_correlation(correlation_id: str) -> list[dict[str, Any]]:
@@ -93,7 +113,11 @@ def handle_get_audit_by_correlation(correlation_id: str) -> list[dict[str, Any]]
 
 
 def handle_get_audit_event_detail(event_id: str) -> dict[str, Any]:
-    return get_service().get_audit_event_detail(event_id)
+    detail = get_service().get_audit_event_detail(event_id)
+    # In repository mode, not_found returns {error: not_found}
+    if isinstance(detail, dict) and detail.get("error") == "not_found":
+        return detail
+    return detail
 
 
 def handle_get_telegram_status() -> dict[str, Any]:

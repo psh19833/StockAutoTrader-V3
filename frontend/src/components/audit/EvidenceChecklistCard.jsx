@@ -25,6 +25,7 @@ function statusColor(status) {
 }
 
 export default function EvidenceChecklistCard({ checklist }) {
+  const hasChecklist = !!checklist && typeof checklist === "object";
   const schemaVersion = checklist?.schema_version || "";
   const stage = checklist?.stage || "";
   const items = Array.isArray(checklist?.items) ? checklist.items : [];
@@ -32,6 +33,11 @@ export default function EvidenceChecklistCard({ checklist }) {
   return (
     <div className="card" style={{ marginTop: 12 }}>
       <h3>Evidence Checklist</h3>
+      {!hasChecklist ? (
+        <div style={{ fontSize: 12, opacity: 0.8 }}>
+          checklist 없음 (event payload에 checklist가 포함되지 않았거나, 저장소에 아직 반영되지 않았습니다)
+        </div>
+      ) : null}
       <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
         schema_version: <span style={{ fontFamily: "monospace" }}>{schemaVersion || "(none)"}</span>
         {stage ? (

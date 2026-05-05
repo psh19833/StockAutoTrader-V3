@@ -54,6 +54,22 @@ class DashboardService:
     def set_audit_repository(self, repo) -> None:
         self._audit_repo = repo
 
+    def _timeline_view_from_repo_row(self, row: dict[str, Any]) -> AuditTimelineView:
+        """Convert repository row -> AuditTimelineView."""
+        return AuditTimelineView(
+            event_type=row.get("event_type", ""),
+            correlation_id=row.get("correlation_id", "") or "",
+            symbol=row.get("symbol", "") or "",
+            timestamp=row.get("event_time", "") or row.get("created_at", "") or "",
+            event_id=row.get("event_id", "") or "",
+            severity=row.get("severity", "INFO") or "INFO",
+            source=row.get("source", "") or "",
+            strategy_name=row.get("strategy_name", "") or "",
+            status=row.get("status", "") or "",
+            summary=row.get("summary", "") or "",
+            has_checklist=bool(row.get("has_checklist", 0)),
+        )
+
     # ── 조회 ──
 
     def get_system_status(self) -> SystemStatusView:
@@ -176,11 +192,16 @@ class DashboardService:
         return None  # No EOD report yet
 
     def get_audit_timeline(self, limit: int = 50) -> list[AuditTimelineView]:
+        if self._audit_repo is not None:
+            rows = self._audit_repo.list_all(limit)
+            return [self._timeline_view_from_repo_row(r) for r in rows]
         return self._audit_events[:limit]
 
     def get_audit_by_correlation(self, correlation_id: str) -> list[AuditTimelineView]:
-        return [e for e in self._audit_events
-                if e.correlation_id == correlation_id]
+        if self._audit_repo is not None:
+            rows = self._audit_repo.find_by_correlation(correlation_id, limit=200)
+            return [self._timeline_view_from_repo_row(r) for r in rows]
+        return [e for e in self._audit_events if e.correlation_id == correlation_id]
 
     def get_audit_event_detail(self, event_id: str) -> dict[str, Any]:
         """Audit event detail (read-only).
@@ -191,10 +212,27 @@ class DashboardService:
         """
         from audit_logging.log_sanitizer import sanitize_dict
 
-        timeline = next((e for e in self._audit_events if e.event_id == event_id), None)
+        timeline = None
+        payload_sanitized: dict[str, Any] = {}
 
-        payload = self._audit_event_payloads.get(event_id, {})
-        payload_sanitized = sanitize_dict(payload) if isinstance(payload, dict) else {}
+        if self._audit_repo is not None:
+            row = self._audit_repo.get_by_event_id(event_id)
+            if row is None:
+                return {"error": "not_found", "event_id": event_id}
+
+            timeline = self._timeline_view_from_repo_row(row)
+
+            raw_payload = row.get("payload", "{}")
+            try:
+                import json
+                payload_obj = json.loads(raw_payload) if isinstance(raw_payload, str) else {}
+            except Exception:
+                payload_obj = {}
+            payload_sanitized = sanitize_dict(payload_obj) if isinstance(payload_obj, dict) else {}
+        else:
+            timeline = next((e for e in self._audit_events if e.event_id == event_id), None)
+            payload = self._audit_event_payloads.get(event_id, {})
+            payload_sanitized = sanitize_dict(payload) if isinstance(payload, dict) else {}
 
         checklist = None
         if isinstance(payload_sanitized, dict):
@@ -204,6 +242,9 @@ class DashboardService:
 
         related = []
         if timeline and timeline.correlation_id:
+            related_events = self.get_audit_by_correlation(timeline.correlation_id)
+            # prevent huge payloads
+            related_events = related_events[:200]
             related = [
                 {
                     "event_id": e.event_id,
@@ -216,7 +257,7 @@ class DashboardService:
                     "summary": e.summary,
                     "correlation_id": e.correlation_id,
                 }
-                for e in self.get_audit_by_correlation(timeline.correlation_id)
+                for e in related_events
             ]
 
         return {
