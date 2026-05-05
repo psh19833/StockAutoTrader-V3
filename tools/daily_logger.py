@@ -11,7 +11,7 @@ Usage:
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -61,7 +61,8 @@ class DailyLogger:
     def _today_str(self) -> str:
         if self._today:
             return self._today
-        return date.today().isoformat()
+        KST = timezone(timedelta(hours=9))
+        return datetime.now(KST).strftime("%Y-%m-%d")
 
     def set_today(self, date_str: str) -> None:
         """Override today's date (for testing)."""
@@ -75,7 +76,8 @@ class DailyLogger:
         today = self._today_str()
         path = self._category_path(today, category)
         path.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        KST = timezone(timedelta(hours=9))
+        ts = datetime.now(KST).strftime("%H:%M:%S")
         filtered = _filter_secrets(message)
         with open(path, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] {filtered}\n")
