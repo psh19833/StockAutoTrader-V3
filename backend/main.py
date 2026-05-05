@@ -19,28 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="SAT3 Dashboard API", version="3.0.0")
 
 
-def _notify_startup():
-    """서버 시작 알림 전송."""
-    try:
-        from notifications.telegram_event import TelegramEvent, TelegramEventType, NotificationSeverity
-        from notifications.telegram_sender import RealTelegramSender
-        from tools.daily_logger import DailyLogger, LogCategory
-        event = TelegramEvent(
-            event_type=TelegramEventType.SERVER_STARTED.value,
-            title="🚀 SAT3 서버 시작",
-            body="SAT3 백엔드 서버가 시작되었습니다.",
-            notification_severity=NotificationSeverity.NORMAL,
-        )
-        RealTelegramSender().send(event)
-        DailyLogger().log(LogCategory.SYSTEM, "SERVER_STARTED: SAT3 backend started")
-    except Exception:
-        pass
-
-
-# 즉시 실행 (uvicorn이 이 모듈을 import 할 때)
-_notify_startup()
-
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

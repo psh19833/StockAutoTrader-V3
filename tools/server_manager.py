@@ -116,6 +116,26 @@ def get_log_content(log_name: str, max_lines: int = 40) -> str:
     return "\n".join(lines[-max_lines:])
 
 
+def _send_telegram_startup() -> None:
+    """Send Telegram notification on backend startup."""
+    try:
+        import json, urllib.request
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            return
+        body = json.dumps({
+            "chat_id": chat_id,
+            "text": "ℹ️ *🚀 SAT3 서버 시작*\nSAT3 백엔드 서버가 시작되었습니다.",
+            "parse_mode": "Markdown",
+        }).encode()
+        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+
 def start_backend() -> bool:
     global _backend_proc
     if _port_is_open(_BACKEND_PORT):
@@ -124,6 +144,10 @@ def start_backend() -> bool:
     _ensure_logs_dir()
     log_path = _LOGS_DIR / _LOG_BACKEND
     venv_python = str(_PROJECT_ROOT / ".venv" / "bin" / "python")
+
+    # Telegram startup notification
+    _send_telegram_startup()
+
     print(f"  Starting backend: uvicorn main:app --host 127.0.0.1 --port {_BACKEND_PORT}")
     _log("start_backend: starting...")
     log_fh = open(log_path, "a", encoding="utf-8")
