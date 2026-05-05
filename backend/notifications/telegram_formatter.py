@@ -46,8 +46,8 @@ def _format_payload(payload: dict) -> str:
 
 
 def _format_order_submitted(event: AuditEvent) -> TelegramEvent:
-    title = f"📤 주문 제출 — {event.symbol or '(종목 미지정)'}"
-    body = f"주문이 제출되었습니다."
+    title = f"📤 주문 접수(체결 아님) — {event.symbol or '(종목 미지정)'}"
+    body = "주문이 거래소/브로커로 접수되었습니다 (아직 체결 아님)."
     if event.symbol:
         body += f"\n  종목: {event.symbol}"
     pl = event.payload or {}

@@ -19,6 +19,7 @@ class FillRecord:
     fill_volume: int = 0
     status: str = "PENDING"
     source: str = ""
+    mismatch_reason: str = ""
 
 
 class FillReconciler:
@@ -39,18 +40,44 @@ class FillReconciler:
             status="PROVISIONAL", source="KIS_API_WS",
         )
 
-    def on_rest_fill_check(self, order_number: str, confirmed: bool) -> None:
+    def on_rest_fill_check(
+        self,
+        order_number: str,
+        confirmed: bool,
+        rest_fill_price: int | None = None,
+        rest_fill_volume: int | None = None,
+    ) -> None:
         """Confirm fill via REST fills API.
 
         Note: REST fill confirmation alone is NOT enough.
         We require balance/position snapshot confirmation too.
+
+        If REST fill quantity/price conflicts with WS provisional values,
+        keep the record unconfirmed and persist mismatch reason.
         """
         if order_number not in self._ws_fills:
             return
         record = self._ws_fills[order_number]
-        if confirmed:
-            record.status = "REST_FILL_CONFIRMED"
-            self._rest_fills[order_number] = record
+        if not confirmed:
+            record.status = "REST_FILL_NOT_CONFIRMED"
+            record.mismatch_reason = "rest_fill_not_confirmed"
+            self._try_finalize(order_number)
+            return
+
+        if rest_fill_price is not None and rest_fill_price != record.fill_price:
+            record.status = "MISMATCH"
+            record.mismatch_reason = "price_mismatch_ws_vs_rest"
+            self._try_finalize(order_number)
+            return
+
+        if rest_fill_volume is not None and rest_fill_volume != record.fill_volume:
+            record.status = "MISMATCH"
+            record.mismatch_reason = "volume_mismatch_ws_vs_rest"
+            self._try_finalize(order_number)
+            return
+
+        record.status = "REST_FILL_CONFIRMED"
+        self._rest_fills[order_number] = record
         self._try_finalize(order_number)
 
     def on_rest_balance_check(self, order_number: str, reflected: bool) -> None:
@@ -59,6 +86,9 @@ class FillReconciler:
         reflected=True means the position/balance snapshot reflects the fill.
         """
         self._balance_confirmed[order_number] = bool(reflected)
+        if order_number in self._ws_fills and not reflected:
+            self._ws_fills[order_number].status = "BALANCE_MISMATCH"
+            self._ws_fills[order_number].mismatch_reason = "balance_not_reflected"
         self._try_finalize(order_number)
 
     def _try_finalize(self, order_number: str) -> None:

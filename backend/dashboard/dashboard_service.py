@@ -31,6 +31,8 @@ class DashboardService:
         self._audit_event_payloads: dict[str, dict[str, Any]] = {}
         self._audit_repo = None
         self._ws_status_provider = None
+        self._session_status_override: SessionStatusView | None = None
+        self._market_regime_override: MarketRegimeView | None = None
 
     # ── 데이터 주입 (Stub 용) ──
 
@@ -49,6 +51,12 @@ class DashboardService:
         NOTE: payloads must be sanitized already or will be sanitized at read time.
         """
         self._audit_event_payloads = dict(payloads)
+
+    def inject_session_status(self, status: SessionStatusView) -> None:
+        self._session_status_override = status
+
+    def inject_market_regime(self, regime: MarketRegimeView) -> None:
+        self._market_regime_override = regime
 
     # ── Repository 주입 (DB 연결) ──
 
@@ -121,90 +129,31 @@ class DashboardService:
         )
 
     def get_session_status(self) -> SessionStatusView:
-        import os
-        from datetime import datetime, timezone, timedelta
-        KST = timezone(timedelta(hours=9))
-        now_kst = datetime.now(KST)
-        today_str = now_kst.strftime("%Y-%m-%d")
-        weekday = now_kst.weekday()
-        weekday_kr = ["월","화","수","목","금","토","일"][weekday]
-        holidays_2026 = {"2026-01-01","2026-02-16","2026-02-17","2026-03-02",
-                         "2026-05-05","2026-05-25","2026-06-06","2026-08-17",
-                         "2026-09-24","2026-09-25","2026-10-03","2026-10-09","2026-12-25"}
-        is_holiday = today_str in holidays_2026
-        is_weekend = weekday >= 5
-        is_trading = not is_holiday and not is_weekend
-        now_str = now_kst.strftime("%H:%M")
-
-        if not is_trading:
-            state = "CLOSED_HOLIDAY"
-            buy = False
-            reason_text = "공휴일" if is_holiday else "주말"
-            detail = f"오늘은 {today_str} ({weekday_kr}) — 한국 주식시장 {reason_text} 휴장"
-        elif now_str < "08:30":
-            state = "CLOSED_BEFORE_MARKET"; buy = False
-            reason_text = "장 시작 전"
-            detail = f"현재 시각 {now_str} — 09:00 정규장 시작까지 대기"
-        elif now_str < "09:00":
-            state = "PRE_MARKET_AUCTION"; buy = False
-            reason_text = "동시호가 시간"
-            detail = f"현재 시각 {now_str} — 09:00 정규장 시작 전 동시호가 구간"
-        elif now_str < "15:20":
-            state = "REGULAR_MARKET"; buy = True
-            reason_text = "정규장"
-            detail = f"현재 시각 {now_str} — 정규장 운영 중, 신규매수 가능"
-        elif now_str < "15:30":
-            state = "LATE_MARKET"; buy = False
-            reason_text = "장 마감 임박"
-            detail = f"현재 시각 {now_str} — 장 마감 10분 전, 신규매수 차단"
-        else:
-            state = "CLOSED_AFTER_MARKET"; buy = False
-            reason_text = "장 마감"
-            detail = f"현재 시각 {now_str} — 장 마감, EOD 처리"
+        # 추정 금지: 시간/휴장일 하드코딩 계산으로 상태를 단정하지 않는다.
+        # 실소스가 없으면 UNKNOWN + 차단으로만 노출한다.
+        if self._session_status_override is not None:
+            return self._session_status_override
 
         return SessionStatusView(
-            session_state=state,
-            buy_allowed=buy,
-            is_trading_day=is_trading,
-            reason=f"{today_str} ({weekday_kr}) — {reason_text}",
-            detail=detail,
+            session_state="UNKNOWN",
+            buy_allowed=False,
+            is_trading_day=False,
+            reason="session_source_unavailable",
+            detail="시장세션 데이터 소스 미연결 — 신규매수 차단(조회전용)",
         )
 
     def get_market_regime(self) -> MarketRegimeView:
-        from datetime import datetime, timezone, timedelta
-        KST = timezone(timedelta(hours=9))
-        now_kst = datetime.now(KST)
-        now_str = now_kst.strftime("%H:%M")
-        weekday = now_kst.weekday()
-
-        # 실제 KIS 데이터 없을 때 시간+요일 기반 추정 표시
-        if weekday >= 5 or now_str < "09:00" or now_str >= "15:30":
-            regime = "UNKNOWN"
-            score = 0.0
-            factors = "장 마감 또는 휴장 — KIS 실시간 데이터 없음"
-            reason = "실시간 시장 데이터 없음 (장 외 시간)"
-        else:
-            regime = "BULL"
-            score = 75.5
-            factors = (
-                "• KOSPI 등락률: +0.8% (7.5/10) | "
-                "• 거래대금: 12.3조 (8.0/10) | "
-                "• 외국인 수급: +3,200억 순매수 (8.5/10) | "
-                "• 변동성(VIX): 18.2 낮음 (7.0/10) | "
-                "• 신용잔고: 감소세 (6.5/10) | "
-                "• 기관 수급: +1,500억 (7.0/10) | "
-                "• 프로그램 매매: 차익 +850억 (7.5/10) | "
-                f"→ 종합 점수: {score}/100 (BULL 판정)"
-            )
-            reason = f"KIS 실시간 시장 데이터 기준 — {now_str} 현재"
+        # 추정 금지: 시간/요일 기반 더미 BULL 판정 금지.
+        if self._market_regime_override is not None:
+            return self._market_regime_override
 
         return MarketRegimeView(
-            regime=regime,
-            allow_new_buy=regime not in ("BEAR", "UNKNOWN"),
-            total_score=score,
-            candidate_score_adjustment=5.0,
-            reason=reason,
-            factors=factors,
+            regime="UNKNOWN",
+            allow_new_buy=False,
+            total_score=0.0,
+            candidate_score_adjustment=0.0,
+            reason="market_regime_source_unavailable",
+            factors="실시간 시장 데이터 소스 미연결 — 점수 산출 보류",
         )
 
     def get_candidates(self) -> list[ScannerCandidateView]:

@@ -98,6 +98,18 @@ class TestPortfolioSync:
         )
         assert ps.total_realized_pnl == 50000
         assert ps.total_unrealized_pnl == 30000
+        assert ps.source_of_truth == "KIS_REST"
+        assert ps.stale is False
+
+    def test_invalid_source_of_truth_marks_stale(self):
+        ps = PortfolioSync()
+        ps.update_snapshot(
+            positions=(), total_realized_pnl=1,
+            total_unrealized_pnl=2,
+            source_of_truth="INMEMORY",
+        )
+        assert ps.stale is True
+        assert "invalid_source_of_truth" in ps.mismatch_reasons
 
 
 class TestPortfolioAudit:

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Optional, Protocol
 
+from safety.live_order_safety_gate import SafetyGateResult
+
 BUY_TR_ID = "TTTC0012U"
 SELL_TR_ID = "TTTC0011U"
 
@@ -62,6 +64,7 @@ def submit_cash_order(
     price: int = 0,
     account_no: str = "",
     safety_gate_approved: bool = False,
+    safety_gate_result: Optional[SafetyGateResult] = None,
     live_trading_enabled: bool = False,
     submitter: Optional[CashOrderSubmitter] = None,
 ) -> OrderSubmitResult:
@@ -75,10 +78,29 @@ def submit_cash_order(
             message="LIVE_TRADING_ENABLED=false — order blocked",
             error_type="LIVE_TRADING_DISABLED",
         )
+    # SafetyGate 강제 체인:
+    # bool 플래그만으로는 주문 경로를 허용하지 않는다.
+    # 반드시 SafetyGateResult(체크 상세/차단 사유 포함)가 연결되어야 한다.
+    if safety_gate_result is None:
+        return OrderSubmitResult(
+            success=False,
+            message="Safety gate result is required — order blocked",
+            error_type="SAFETY_GATE_CHAIN_REQUIRED",
+        )
+
+    if not safety_gate_result.passed:
+        reasons = ", ".join(safety_gate_result.block_reasons) if safety_gate_result.block_reasons else "unknown"
+        return OrderSubmitResult(
+            success=False,
+            message=f"Safety gate blocked order: {reasons}",
+            error_type="SAFETY_GATE_NOT_APPROVED",
+        )
+
+    # 하위 호환: 명시적 false는 항상 차단
     if not safety_gate_approved:
         return OrderSubmitResult(
             success=False,
-            message="Safety gate not approved — order blocked",
+            message="Safety gate approved flag is false — order blocked",
             error_type="SAFETY_GATE_NOT_APPROVED",
         )
 

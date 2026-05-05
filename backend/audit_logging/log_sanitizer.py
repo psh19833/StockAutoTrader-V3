@@ -35,7 +35,11 @@ SENSITIVE_ENV_NAMES: frozenset[str] = frozenset({
 _ACCOUNT_PATTERN = re.compile(r"\b(\d{8})-(\d{2})\b")
 
 # 토큰 패턴 (JWT 또는 유사 구조)
-_TOKEN_PATTERN = re.compile(r"\b([A-Za-z0-9_-]{20,}(?:\.[A-Za-z0-9_-]+)*)\b")
+# - JWT: xxxxx.yyyyy.zzzzz
+# - Long opaque tokens: 24+ safe chars
+_TOKEN_PATTERN = re.compile(
+    r"\b(?:[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|[A-Za-z0-9_-]{24,})\b"
+)
 
 # Telegram Bot Token 패턴
 _TELEGRAM_BOT_PATTERN = re.compile(r"\b(\d{5,15}:[A-Za-z0-9_-]{20,})\b")

@@ -116,6 +116,7 @@ class TestScenarioH_AllPassedAutoStart:
             "005930", "buy", 1,
             live_trading_enabled=True,
             safety_gate_approved=True,
+            safety_gate_result=result,
         )
         # In safety-hardening phase: even if SafetyGate passes, live submit must NOT
         # return mock success unless a test-only submitter is explicitly injected.

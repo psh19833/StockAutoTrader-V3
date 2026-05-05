@@ -171,3 +171,17 @@ class TestDashboardSummary:
         raw = str(s.__dict__)
         for secret in ["app_key", "api_key", "token", "account_no", "chat_id"]:
             assert secret not in raw
+
+
+class TestDashboardServiceReadOnlyStatus:
+    def test_default_session_status_is_unknown_and_buy_blocked(self):
+        svc = DashboardService()
+        session = svc.get_session_status()
+        assert session.session_state == "UNKNOWN"
+        assert session.buy_allowed is False
+
+    def test_default_market_regime_is_unknown_and_no_buy(self):
+        svc = DashboardService()
+        regime = svc.get_market_regime()
+        assert regime.regime == "UNKNOWN"
+        assert regime.allow_new_buy is False
