@@ -27,7 +27,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-_IS_WINDOWS: bool = platform.system() == "Windows" or os.name == "nt"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Load .env before anything else
+try:
+    from dotenv import load_dotenv
+    _env_path = _PROJECT_ROOT / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:
+    pass
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _BACKEND_DIR = _PROJECT_ROOT / "backend"
