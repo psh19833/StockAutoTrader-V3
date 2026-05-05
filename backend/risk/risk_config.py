@@ -11,9 +11,7 @@ class RiskLimits:
     기본값은 안전하게 보수적으로 설정.
     실제 운영값은 설정에서 주입 가능하도록 설계.
     """
-    max_position_count: int = 5
-    max_amount_per_symbol: int = 10_000_000
-    max_daily_loss_amount: int = 1_000_000
-    max_daily_loss_rate: float = 0.03
-    reentry_block_minutes: int = 30
-    min_candidate_score_for_buy: float = 50.0
+    max_amount_per_symbol: int = 10_000_000        # 종목당 최대 금액
+    max_daily_loss_pct: float = 0.05               # 예수금 대비 일일손실한도 5%
+    reentry_block_minutes: int = 30                 # 재진입 제한 시간
+    min_candidate_score_for_buy: float = 50.0       # 최소 퀀트 점수

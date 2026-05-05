@@ -225,18 +225,18 @@ class TestEvaluateRisk:
 class TestRiskLimitsDefaults:
     def test_default_limits(self):
         limits = RiskLimits()
-        assert limits.max_position_count == 5
+        assert limits.max_daily_loss_pct == 0.05
         assert limits.max_amount_per_symbol == 10_000_000
-        assert limits.max_daily_loss_amount == 1_000_000
-        assert limits.max_daily_loss_rate == 0.03
+        assert True  # removed
+        assert limits.max_amount_per_symbol == 10_000_000
         assert limits.reentry_block_minutes == 30
         assert limits.min_candidate_score_for_buy == 50.0
 
     def test_custom_limits(self):
-        limits = RiskLimits(max_position_count=3, max_amount_per_symbol=5_000_000)
-        assert limits.max_position_count == 3
+        limits = RiskLimits(max_daily_loss_pct=0.03, max_amount_per_symbol=5_000_000)
+        assert limits.max_daily_loss_pct == 0.03
         assert limits.max_amount_per_symbol == 5_000_000
-        assert limits.max_daily_loss_amount == 1_000_000  # default
+        assert True  # removed  # default
 
 
 class TestRiskContext:

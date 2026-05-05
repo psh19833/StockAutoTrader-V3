@@ -74,7 +74,7 @@ class TestTelegramEvent:
         )
         msg = event.formatted_message
         assert "ℹ️" in msg
-        assert "*SAT3 시작*" in msg
+        assert "<b>SAT3 시작</b>" in msg
         assert "본문" in msg
 
     def test_formatted_message_critical(self):

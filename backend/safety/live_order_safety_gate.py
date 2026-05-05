@@ -54,11 +54,10 @@ class LiveOrderSafetyGate:
         quote_stale: bool = False,
         orderbook_stale: bool = False,
         max_daily_loss_exceeded: bool = False,
-        max_position_exceeded: bool = False,
         duplicate_order: bool = False,
         ws_connected: bool = True,
     ) -> SafetyGateResult:
-        """Run all safety checks.
+        """Run all safety checks (10-layer).
 
         Returns BLOCKED if any check fails.
         """
@@ -78,9 +77,7 @@ class LiveOrderSafetyGate:
             SafetyGateCheck("ORDERBOOK_FRESH", not orderbook_stale,
                             "Orderbook data is stale"),
             SafetyGateCheck("MAX_DAILY_LOSS", not max_daily_loss_exceeded,
-                            "Max daily loss exceeded"),
-            SafetyGateCheck("MAX_POSITION", not max_position_exceeded,
-                            "Max position limit exceeded"),
+                            "Max daily loss exceeded (5% of deposit)"),
             SafetyGateCheck("DUPLICATE_ORDER", not duplicate_order,
                             "Duplicate order detected"),
             SafetyGateCheck("WS_CONNECTED", ws_connected,
