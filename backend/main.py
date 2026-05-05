@@ -18,6 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="SAT3 Dashboard API", version="3.0.0")
 
+# Startup log
+try:
+    from tools.daily_logger import DailyLogger, LogCategory
+    DailyLogger().log(LogCategory.SYSTEM, f"SAT3 backend started (pid={os.getpid()})")
+except Exception:
+    pass
+
 
 app.add_middleware(
     CORSMiddleware,
