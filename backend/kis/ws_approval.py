@@ -51,11 +51,24 @@ class ApprovalResponse:
         rt_cd = str(body.get("rt_cd", ""))
         msg_cd = str(body.get("msg_cd", ""))
         msg1 = str(body.get("msg1", ""))
-        success = rt_cd == "0"
+
+        # Support both output.approval_key and top-level approval_key.
         output = body.get("output") if isinstance(body, dict) else None
         approval_key = None
-        if isinstance(output, dict):
+        if isinstance(output, dict) and output.get("approval_key"):
             approval_key = output.get("approval_key")
+        elif isinstance(body, dict) and body.get("approval_key"):
+            approval_key = body.get("approval_key")
+
+        # Success rules:
+        # - rt_cd == "0" => success
+        # - rt_cd missing but approval_key present => success
+        # - rt_cd present and not "0" => failure
+        if rt_cd:
+            success = (rt_cd == "0")
+        else:
+            success = bool(approval_key)
+
         return cls(
             success=success,
             approval_key=approval_key if success else None,

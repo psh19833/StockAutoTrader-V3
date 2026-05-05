@@ -16,8 +16,19 @@ class TransportResponse:
 
 
 class KisTransport(Protocol):
-    def get_json(self, path: str, params: dict | None = None) -> TransportResponse: ...
-    def post_json(self, path: str, json_data: dict | None = None) -> TransportResponse: ...
+    def get_json(
+        self,
+        path: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+    ) -> TransportResponse: ...
+
+    def post_json(
+        self,
+        path: str,
+        json_data: dict | None = None,
+        headers: dict | None = None,
+    ) -> TransportResponse: ...
 
 
 class StubTransport:
@@ -60,20 +71,35 @@ class RealTransport:
 
     def _check_order_endpoint(self, path: str) -> None:
         from kis.errors import OrderEndpointBlockedError
+        from urllib.parse import urlparse
+
+        # Block by parsed path so callers cannot bypass with full URL or query.
+        parsed = urlparse(path)
+        path_only = (parsed.path or path).split("?", 1)[0]
+
         order_paths = [
             "/uapi/domestic-stock/v1/trading/order-cash",
             "/uapi/domestic-stock/v1/trading/order-credit",
             "/uapi/domestic-stock/v1/trading/order-rvsecncl",
         ]
-        if any(path.startswith(p) for p in order_paths):
-            raise OrderEndpointBlockedError(f"Order endpoint blocked: {path}")
+        if any(path_only.startswith(p) for p in order_paths):
+            raise OrderEndpointBlockedError(f"Order endpoint blocked: {path_only}")
 
     def get_json(self, path: str, params: dict | None = None,
                  headers: dict | None = None) -> TransportResponse:
         self._check_order_endpoint(path)
         import urllib.request
+        import urllib.error
         import json
+        from urllib.parse import urlencode
+
         url = self._full_url(path)
+        if params:
+            # Drop None values; never log params.
+            filtered = {k: v for k, v in params.items() if v is not None}
+            if filtered:
+                qs = urlencode(filtered)
+                url = (url + ("&" if "?" in url else "?") + qs)
         try:
             req = urllib.request.Request(url, method="GET")
             if headers:
@@ -86,18 +112,28 @@ class RealTransport:
                     body=body if isinstance(body, dict) else {"data": body},
                 )
         except urllib.error.HTTPError as e:
-            return TransportResponse(status_code=e.code, body={"error": str(e)})
+            # Preserve JSON error body if possible (sanitized). Do not return str(e).
+            try:
+                raw = e.read().decode("utf-8", errors="replace")
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    from audit_logging.log_sanitizer import sanitize_dict
+                    return TransportResponse(status_code=e.code, body=sanitize_dict(parsed))
+                return TransportResponse(status_code=e.code, body={"data": parsed})
+            except Exception:
+                return TransportResponse(status_code=e.code, body={"error": "HTTPError", "status_code": e.code})
         except urllib.error.URLError as e:
             raise ConnectionError(f"Network error: {e}")
         except json.JSONDecodeError:
             return TransportResponse(status_code=200, body={"error": "json_parse_error"})
-        except Exception as e:
-            return TransportResponse(status_code=500, body={"error": str(e)})
+        except Exception:
+            return TransportResponse(status_code=500, body={"error": "unexpected_error"})
 
     def post_json(self, path: str, json_data: dict | None = None,
                   headers: dict | None = None) -> TransportResponse:
         self._check_order_endpoint(path)
         import urllib.request
+        import urllib.error
         import json
         url = self._full_url(path)
         try:
@@ -116,10 +152,19 @@ class RealTransport:
                     body=body if isinstance(body, dict) else {"data": body},
                 )
         except urllib.error.HTTPError as e:
-            return TransportResponse(status_code=e.code, body={"error": str(e)})
+            # Preserve JSON error body if possible (sanitized). Do not return str(e).
+            try:
+                raw = e.read().decode("utf-8", errors="replace")
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    from audit_logging.log_sanitizer import sanitize_dict
+                    return TransportResponse(status_code=e.code, body=sanitize_dict(parsed))
+                return TransportResponse(status_code=e.code, body={"data": parsed})
+            except Exception:
+                return TransportResponse(status_code=e.code, body={"error": "HTTPError", "status_code": e.code})
         except urllib.error.URLError as e:
             raise ConnectionError(f"Network error: {e}")
         except json.JSONDecodeError:
             return TransportResponse(status_code=200, body={"error": "json_parse_error"})
-        except Exception as e:
-            return TransportResponse(status_code=500, body={"error": str(e)})
+        except Exception:
+            return TransportResponse(status_code=500, body={"error": "unexpected_error"})

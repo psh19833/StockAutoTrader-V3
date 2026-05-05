@@ -146,6 +146,8 @@ class StubWebSocketClient(WebSocketClient):
             reconnect_count=self._reconnect_count,
             last_error_type=self._last_error_type,
             data_quality_warnings=list(self._data_quality_warnings),
+            receiver_loop_running=False,
+            receive_loop_status="manual_recv_only",
         )
 
     # ── Stub helpers for test injection ────────────────────────────────────
@@ -296,6 +298,36 @@ class GuardedRealWebSocketClient(WebSocketClient):
                 pass
         self._subscribed.pop(tr_id, None)
 
+    def receive_once(self):
+        """Receive exactly one message and parse it.
+
+        Notes:
+        - No background loop / reconnect loop in this method.
+        - Do NOT store raw payload; only keep raw_hash.
+        """
+        if self._connection_state != ConnectionState.CONNECTED or not self._ws:
+            raise RuntimeError(f"Cannot receive: client is {self._connection_state.value}")
+
+        raw = self._ws.recv()
+        # Store only a hash, never the raw message.
+        self._last_raw_hash = None
+        try:
+            import hashlib
+
+            if isinstance(raw, str):
+                b = raw.encode("utf-8", errors="replace")
+            else:
+                b = bytes(raw)
+            self._last_raw_hash = hashlib.sha256(b).hexdigest()
+        except Exception:
+            self._last_raw_hash = None
+
+        from kis.ws_parser import dispatch_message
+
+        parsed = dispatch_message(raw)
+        self._last_message_at = datetime.now(timezone.utc)
+        return parsed
+
     def get_status(self) -> WebSocketConnectionStatus:
         return WebSocketConnectionStatus(
             connection_state=self._connection_state.value,
@@ -304,6 +336,8 @@ class GuardedRealWebSocketClient(WebSocketClient):
             reconnect_count=self._reconnect_count,
             last_error_type=self._last_error_type,
             data_quality_warnings=list(self._data_quality_warnings),
+            receiver_loop_running=False,
+            receive_loop_status="manual_recv_only",
         )
 
     def __repr__(self) -> str:

@@ -132,3 +132,7 @@ class WebSocketConnectionStatus:
     reconnect_count: int = 0
     last_error_type: Optional[str] = None
     data_quality_warnings: list[str] = field(default_factory=list)
+
+    # Contract marker: this client does not run an automatic receive loop.
+    receiver_loop_running: bool = False
+    receive_loop_status: str = "manual_recv_only"

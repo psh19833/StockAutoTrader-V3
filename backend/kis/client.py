@@ -53,15 +53,20 @@ class KisClient:
         self._transport = transport
 
     def _check_order_endpoint(self, path: str) -> None:
-        """주문 endpoint 호출 차단"""
+        """주문 endpoint 호출 차단 (full URL 우회 방지)"""
         from kis.errors import OrderEndpointBlockedError
+        from urllib.parse import urlparse
+
+        parsed = urlparse(path)
+        path_only = (parsed.path or path).split("?", 1)[0]
+
         order_paths = [
             "/uapi/domestic-stock/v1/trading/order-cash",
             "/uapi/domestic-stock/v1/trading/order-credit",
             "/uapi/domestic-stock/v1/trading/order-rvsecncl",
         ]
-        if any(path.startswith(p) for p in order_paths):
-            raise OrderEndpointBlockedError(f"Order endpoint blocked: {path}")
+        if any(path_only.startswith(p) for p in order_paths):
+            raise OrderEndpointBlockedError(f"Order endpoint blocked: {path_only}")
 
     def get_json(self, path: str, params: dict | None = None):
         self._check_order_endpoint(path)

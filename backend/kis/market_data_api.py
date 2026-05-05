@@ -17,7 +17,7 @@ class MarketDataApi:
         if self._client:
             resp = self._client.get_json(endpoint_name, params=params)
         elif self._transport:
-            resp = self._transport.get_json(fallback_path)
+            resp = self._transport.get_json(fallback_path, params=params)
         else:
             return {}
         if resp.status_code != 200:

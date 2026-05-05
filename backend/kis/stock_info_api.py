@@ -22,7 +22,7 @@ class StockInfoApi:
             resp = self._client.get_json("domestic_stock_basic_info",
                                          params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol})
         elif self._transport:
-            resp = self._transport.get_json(_INFO_PATH)
+            resp = self._transport.get_json(_INFO_PATH, params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol})
         else:
             return {"symbol": symbol, "data_available": False, "source": "KIS_API", "source_endpoints": ()}
         if resp.status_code != 200:

@@ -106,7 +106,8 @@ _ENDPOINT_DEFS: list[tuple] = [
     ("inquire_rank_short_selling", EndpointCategory.RANKING, "/uapi/domestic-stock/v1/ranking/short-selling", "GET", "FHPST02200000", True, False, "공매도 순위"),
 
     # ── 실시간시세 ──
-    ("realtime_websocket", EndpointCategory.REALTIME, "/oauth2/approval", "POST", None, True, False, "실시간 웹소켓 승인 키 발급"),
+    # WebSocket approval key (KIS uses capital 'A' in /oauth2/Approval)
+    ("realtime_websocket", EndpointCategory.REALTIME, "/oauth2/Approval", "POST", None, True, False, "실시간 웹소켓 승인 키 발급"),
 ]
 
 # 빌드: tuple → KisEndpoint
@@ -129,6 +130,10 @@ _ENDPOINT_ALIASES = {
     "domestic_holiday": "inquire_holiday",
     "domestic_stock_basic_info": "inquire_stock_basic",
     "domestic_stock_execution": "inquire_time_ccnl",
+
+    # WebSocket approval endpoint aliases
+    "websocket_approval": "realtime_websocket",
+    "realtime_websocket_approval": "realtime_websocket",
 }
 
 

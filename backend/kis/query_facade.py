@@ -21,9 +21,16 @@ class KisQueryFacade:
     def _safe_call(self, fn, *args, **kwargs) -> dict:
         try:
             return fn(*args, **kwargs)
-        except Exception:
-            return {"data_available": False, "source": "KIS_API",
-                    "source_endpoints": ()}
+        except Exception as e:
+            # Keep visibility without leaking exception messages (may contain secrets).
+            return {
+                "data_available": False,
+                "source": "KIS_API",
+                "source_endpoints": (),
+                "error_type": type(e).__name__,
+                "reason_code": "KIS_QUERY_FAILED",
+                "reason_text": "KIS query failed",
+            }
 
     # ── Market Schedule ──
 

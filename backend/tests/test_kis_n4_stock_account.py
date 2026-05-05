@@ -94,7 +94,7 @@ STUB_FILLS = {
 class TestAccountApi:
     def test_get_balance(self):
         t = _make_stub(**STUB_BALANCE)
-        api = AccountApi(transport=t, base_url="https://test.com")
+        api = AccountApi(transport=t, base_url="https://test.com", account_no="44413716-01")
         result = api.get_balance()
         assert result["positions"]
         assert result["positions"][0]["symbol"] == "005930"
@@ -102,8 +102,8 @@ class TestAccountApi:
 
     def test_get_fills(self):
         t = _make_stub(**STUB_FILLS)
-        api = AccountApi(transport=t, base_url="https://test.com")
-        result = api.get_fills()
+        api = AccountApi(transport=t, base_url="https://test.com", account_no="44413716-01")
+        result = api.get_fills(inqr_strt_dt="20250101", inqr_end_dt="20250101")
         assert len(result) == 1
         assert result[0]["symbol"] == "005930"
         assert result[0]["filled_qty"] == 10
@@ -114,8 +114,8 @@ class TestAccountApi:
                         "sll_buy_dvsn_cd": "02", "tot_ccld_qty": "5",
                         "tot_ccld_amt": "375000", "rmn_qty": "5"}]
         }})
-        api = AccountApi(transport=t, base_url="https://test.com")
-        result = api.get_fills()
+        api = AccountApi(transport=t, base_url="https://test.com", account_no="44413716-01")
+        result = api.get_fills(inqr_strt_dt="20250101", inqr_end_dt="20250101")
         assert result[0]["remaining_qty"] == 5
 
     def test_no_order_submit(self):
@@ -127,6 +127,6 @@ class TestAccountApi:
 
     def test_no_account_no_in_output(self):
         t = _make_stub(**STUB_BALANCE)
-        api = AccountApi(transport=t, base_url="https://test.com")
+        api = AccountApi(transport=t, base_url="https://test.com", account_no="44413716-01")
         result = api.get_balance()
         assert "account_no" not in str(result)

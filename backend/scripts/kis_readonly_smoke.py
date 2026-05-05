@@ -124,15 +124,18 @@ def _debug_response_keys(transport, base_url: str, symbol: str) -> None:
     client = KisClient(base_url=base_url, transport=transport,
                        app_key="***", app_secret="***")
 
+    # Use endpoint catalog names (no placeholder paths).
+    # Values must never be printed; we only show key structure.
     endpoints = [
-        ("market-status", "/uapi/domestic-stock/v1/quotations/market-status"),
-        ("price", "/uapi/price"),
-        ("stock-info", "/uapi/stock-info"),
+        ("market-status", "inquire_market_status", None),
+        ("price", "inquire_price", {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}),
+        ("stock-basic", "inquire_stock_basic", {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}),
+        # balance is optional and requires account params (handled by AccountApi in normal flow)
     ]
 
-    for name, path in endpoints:
+    for name, endpoint_name, params in endpoints:
         try:
-            resp = client.get_json(path)
+            resp = client.get_json(endpoint_name, params=params)
             body = resp.body
             # key 목록만 안전하게 출력
             top_keys = list(body.keys())
