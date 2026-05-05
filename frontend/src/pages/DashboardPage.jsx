@@ -29,8 +29,8 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, []);
 
-  if (error) return <div className="error">Dashboard unavailable: {error.message}</div>;
-  if (!data) return <div className="loading">Loading SAT3 Dashboard...</div>;
+  if (error) return <div className="error">대시보드 연결 안 됨: {error.message}</div>;
+  if (!data) return <div className="loading">SAT3 대시보드 불러오는 중...</div>;
 
   return (
     <div className="dashboard">

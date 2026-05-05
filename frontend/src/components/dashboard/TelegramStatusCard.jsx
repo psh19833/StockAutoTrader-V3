@@ -9,16 +9,16 @@ export default function TelegramStatusCard() {
     return () => clearInterval(t);
   }, []);
 
-  if (!data) return <div className="card"><h3>Telegram</h3><p>Loading...</p></div>;
+  if (!data) return <div className="card"><h3>텔레그램</h3><p>불러오는 중...</p></div>;
   const cls = data.connected ? "safe" : "danger";
   return (
     <div className="card">
-      <h3>Telegram</h3>
-      <p>Status: <span className={cls}>{data.connected ? "CONNECTED" : "DISCONNECTED"}</span></p>
-      {data.bot_name && <p>Bot: {data.bot_name}</p>}
-      {data.chat_id && <p>Chat ID: {data.chat_id}</p>}
-      {data.last_message_at && <p>Last: {data.last_message_at}</p>}
-      {data.error && <p className="danger">{data.error}</p>}
+      <h3>텔레그램</h3>
+      <p>상태: <span className={cls}>{data.connected ? "연결됨" : "끊김"}</span></p>
+      {data.bot_name && <p>봇: {data.bot_name}</p>}
+      {data.chat_id && <p>채팅방 ID: {data.chat_id}</p>}
+      {data.last_message_at && <p>마지막 메시지: {data.last_message_at}</p>}
+      {data.error && <p className="danger">오류: {data.error}</p>}
     </div>
   );
 }

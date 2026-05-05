@@ -7,18 +7,18 @@ export default function KisAccountCard() {
   const [data, setData] = useState(null);
   useEffect(() => { fetchKisAccount().then(setData).catch(() => {}); }, []);
 
-  if (!data) return <div className="card"><h3>KIS Account</h3><p>Loading...</p></div>;
+  if (!data) return <div className="card"><h3>계좌 정보</h3><p>불러오는 중...</p></div>;
   return (
     <div className="card">
-      <h3>KIS Account</h3>
-      <p>Account: {data.account_no}</p>
-      <p>Product: {data.product_code}</p>
-      <p>Deposit: ₩{fmt(data.deposit)}</p>
-      <p>Total Value: ₩{fmt(data.total_value)}</p>
-      <p>Buy Amount: ₩{fmt(data.total_buy_amount)}</p>
-      <p>Holdings: {data.holding_count}</p>
+      <h3>계좌 정보</h3>
+      <p>계좌번호: {data.account_no}</p>
+      <p>상품코드: {data.product_code}</p>
+      <p>예수금: ₩{fmt(data.deposit)}</p>
+      <p>평가금액: ₩{fmt(data.total_value)}</p>
+      <p>매수금액: ₩{fmt(data.total_buy_amount)}</p>
+      <p>보유종목: {data.holding_count}개</p>
       <p>D+2: ₩{fmt(data.d2_deposit)}</p>
-      {data.stale && <p className="warn">Data may be stale</p>}
+      {data.stale && <p className="warn">데이터 갱신 필요</p>}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { fetchLogs, fetchLogDates } from "../../api/dashboardApi";
 
 const CATS = ["system", "trading", "scanner", "quant", "risk", "websocket", "telegram", "emergency"];
+const CAT_LABELS = { system: "시스템", trading: "매매", scanner: "스캐너", quant: "퀀트", risk: "리스크", websocket: "실시간", telegram: "텔레그램", emergency: "비상정지" };
 
 export default function LogViewer() {
   const [dates, setDates] = useState([]);
@@ -23,7 +24,7 @@ export default function LogViewer() {
 
   return (
     <div className="card" style={{ gridColumn: "1 / -1" }}>
-      <h3>Operational Logs</h3>
+      <h3>운영 로그</h3>
       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
         <select value={date} onChange={e => setDate(e.target.value)}
           style={{ background: "#21262d", color: "#c9d1d9", border: "1px solid #30363d", padding: 4, borderRadius: 4 }}>
@@ -35,7 +36,7 @@ export default function LogViewer() {
               background: cat === c ? "#1f6feb" : "#21262d", color: "#c9d1d9",
               border: "1px solid #30363d", padding: "4px 10px", borderRadius: 4, cursor: "pointer",
               opacity: availCats.length && !availCats.includes(c) ? 0.4 : 1,
-            }}>{c}</button>
+            }}>{CAT_LABELS[c]}</button>
         ))}
       </div>
       <pre style={{
@@ -43,7 +44,7 @@ export default function LogViewer() {
         maxHeight: 300, overflow: "auto", fontSize: 12, margin: 0,
         fontFamily: "Consolas, monospace", whiteSpace: "pre-wrap", wordBreak: "break-all"
       }}>
-        {lines.length ? lines.join("\n") : "(no log data)"}
+        {lines.length ? lines.join("\n") : "(로그 데이터 없음)"}
       </pre>
     </div>
   );

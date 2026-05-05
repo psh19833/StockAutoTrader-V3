@@ -1,13 +1,14 @@
 import React from "react";
 
 export default function MarketRegimeCard({ data }) {
-  if (!data) return <div className="card">No regime data</div>;
+  if (!data) return <div className="card">데이터 없음</div>;
+  const regimeMap = { BULL: "강세", NEUTRAL: "중립", BEAR: "약세", UNKNOWN: "알 수 없음" };
   return (
     <div className="card">
-      <h3>Market Regime</h3>
-      <p>Regime: <span className={data.allow_new_buy ? "safe" : "warn"}>{data.regime}</span></p>
-      <p>New Buy: {data.allow_new_buy ? "Allowed" : "Blocked"}</p>
-      <p>Score: {data.total_score?.toFixed(2)}</p>
+      <h3>시장 국면</h3>
+      <p>국면: <span className={data.allow_new_buy ? "safe" : "warn"}>{regimeMap[data.regime] || data.regime}</span></p>
+      <p>신규매수: {data.allow_new_buy ? "허용" : "차단"}</p>
+      <p>점수: {data.total_score?.toFixed(2)}</p>
     </div>
   );
 }
