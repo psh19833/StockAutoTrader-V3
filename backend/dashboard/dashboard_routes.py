@@ -119,17 +119,80 @@ def handle_get_telegram_status() -> dict[str, Any]:
 
 def handle_get_kis_account() -> dict[str, Any]:
     from dashboard.dashboard_models import KisAccountView
-    import os
+    import os, json, urllib.request, urllib.error
     acc = os.getenv("KIS_ACCOUNT_NO", "")
     prod = os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "01")
-    return _to_dict(KisAccountView(
-        account_no=acc,
-        product_code=prod,
-        deposit=0,
-        total_value=0,
-        holding_count=0,
-        stale=True,
-    ))
+    app_key = os.getenv("KIS_APP_KEY", "")
+    app_secret = os.getenv("KIS_APP_SECRET", "")
+
+    if not acc or not app_key or not app_secret:
+        return _to_dict(KisAccountView(
+            account_no=acc, product_code=prod, stale=True,
+        ))
+
+    try:
+        # 1. Get access token
+        token_url = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
+        token_body = json.dumps({
+            "grant_type": "client_credentials",
+            "appkey": app_key,
+            "appsecret": app_secret,
+        }).encode()
+        token_req = urllib.request.Request(token_url, data=token_body, method="POST")
+        token_req.add_header("content-type", "application/json")
+        token_resp = urllib.request.urlopen(token_req, timeout=10)
+        token_data = json.loads(token_resp.read().decode())
+        access_token = token_data.get("access_token", "")
+
+        if not access_token:
+            return _to_dict(KisAccountView(account_no=acc, product_code=prod, stale=True))
+
+        # 2. Balance inquiry
+        bal_url = ("https://openapi.koreainvestment.com:9443"
+                   "/uapi/domestic-stock/v1/trading/inquire-balance"
+                   "?CANO=" + acc.replace("-", "")[:8] +
+                   "&ACNT_PRDT_CD=" + prod +
+                   "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=01&UNPR_DVSN=01"
+                   "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N"
+                   "&PRCS_DVSN=00&CTX_AREA_FK100=&CTX_AREA_NK100=")
+        bal_req = urllib.request.Request(bal_url, method="GET")
+        bal_req.add_header("authorization", f"Bearer {access_token}")
+        bal_req.add_header("appkey", app_key)
+        bal_req.add_header("appsecret", app_secret)
+        bal_req.add_header("tr_id", "TTTC8434R")
+        bal_resp = urllib.request.urlopen(bal_req, timeout=10)
+        bal_data = json.loads(bal_resp.read().decode())
+
+        if bal_data.get("rt_cd") == "0" and "output1" in bal_data:
+            out1 = bal_data["output1"]
+            deposit = int(out1.get("dnca_tot_amt", "0") or "0")
+            total_value = int(out1.get("tot_evlu_amt", "0") or "0")
+            buy_amount = int(out1.get("pchs_amt", "0") or "0")
+
+            # Count holdings from output2
+            holdings = 0
+            if "output2" in bal_data and isinstance(bal_data["output2"], list):
+                holdings = len(bal_data["output2"])
+
+            return _to_dict(KisAccountView(
+                account_no=acc,
+                product_code=prod,
+                deposit=deposit,
+                total_value=total_value,
+                total_buy_amount=buy_amount,
+                holding_count=holdings,
+                d2_deposit=int(out1.get("d2_auto_rdpt_amt", "0") or "0"),
+                stale=False,
+            ))
+
+        return _to_dict(KisAccountView(
+            account_no=acc, product_code=prod, stale=True,
+        ))
+
+    except Exception as e:
+        return _to_dict(KisAccountView(
+            account_no=acc, product_code=prod, stale=True,
+        ))
 
 
 def handle_get_daily_summary(date_str: str = "") -> dict[str, Any]:
