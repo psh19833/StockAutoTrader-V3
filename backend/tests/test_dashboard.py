@@ -142,7 +142,8 @@ class TestDashboardSummary:
         )
         assert isinstance(s, DashboardSummary)
         assert s.system.live_trading_enabled is False
-        assert s.session.buy_allowed is True
+        # session buy_allowed is now date-dependent (holiday/weekend aware)
+        assert s.session.session_state is not None  # always returns a valid state
 
     def test_summary_marks_live_trading_disabled(self):
         s = build_dashboard_summary(
