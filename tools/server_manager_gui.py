@@ -64,6 +64,19 @@ class ServerManagerGUI:
         self._root = tk.Tk()
         self._root.title(_WINDOW_TITLE)
         self._root.geometry(_WINDOW_GEOMETRY)
+
+        # WSL UNC path check — must run inside WSL
+        cwd = os.getcwd()
+        if cwd.startswith(r"\\\\wsl.localhost") or cwd.startswith(r"\\\\wsl$"):
+            from tkinter import messagebox
+            messagebox.showerror(
+                "WSL UNC Path Error",
+                "This GUI was launched from Windows Python but the project is on a WSL UNC path.\n\n"
+                "Run inside WSL instead:\n"
+                "  wsl -d Ubuntu --cd /home/psh19/StockAutoTrader-V3 -- python3 tools/server_manager_gui.py"
+            )
+            self._root.destroy()
+            return
         self._root.resizable(True, True)
         self._root.configure(bg=_BG_LIGHT)
         self._root.minsize(700, 500)

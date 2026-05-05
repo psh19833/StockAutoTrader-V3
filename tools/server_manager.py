@@ -6,6 +6,7 @@ Features:
   - Check backend (port 8000) and frontend (port 5173) status
   - Start/stop/restart backend and frontend servers
   - Log output to logs/ directory
+  - WSL UNC path guard (Windows Python accessing \\\\wsl.localhost)
 
 Usage:
   python tools/server_manager.py          # interactive menu
@@ -24,15 +25,18 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _IS_WINDOWS: bool = platform.system() == "Windows" or os.name == "nt"
-_IS_WSL: bool = os.name == "posix" and "microsoft" in platform.uname().release.lower()
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _BACKEND_DIR = _PROJECT_ROOT / "backend"
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
 _LOGS_DIR = _PROJECT_ROOT / "logs"
+
+_PROJECT_ROOT_STR: str = str(_PROJECT_ROOT)
+_WSL_UNC_PREFIXES: Tuple[str, ...] = (r"\\wsl.localhost", r"\\wsl$")
+_IS_WSL_UNC_PATH: bool = any(_PROJECT_ROOT_STR.startswith(p) for p in _WSL_UNC_PREFIXES)
 
 _BACKEND_PORT = 8000
 _FRONTEND_PORT = 5173
@@ -105,7 +109,10 @@ def get_log_content(log_name: str, max_lines: int = 40) -> str:
     path = _LOGS_DIR / log_name
     if not path.exists():
         return f"(no log file: {path})"
-    lines = path.read_text(encoding="utf-8").splitlines()
+    # Handle non-UTF8 bytes from npm/ansi output
+    raw = path.read_bytes()
+    text = raw.decode("utf-8", errors="replace")
+    lines = text.splitlines()
     return "\n".join(lines[-max_lines:])
 
 
@@ -125,8 +132,7 @@ def start_backend() -> bool:
         _backend_proc = subprocess.Popen(
             [venv_python, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(_BACKEND_PORT)],
             cwd=str(_BACKEND_DIR), env=env,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
+            stdout=log_fh, stderr=subprocess.STDOUT,
             start_new_session=True,
         )
     except Exception as e:
@@ -157,6 +163,14 @@ def restart_backend() -> bool:
 
 def start_frontend() -> bool:
     global _frontend_proc
+
+    # ── WSL UNC path guard ──────────────────────────────────────────────
+    if _IS_WSL_UNC_PATH:
+        print("  ERROR: Project path is a WSL UNC path. Launch from inside WSL instead.")
+        print(f"    wsl -d Ubuntu --cd /home/psh19/StockAutoTrader-V3 -- python3 tools/server_manager_gui.py")
+        _log("start_frontend: BLOCKED — UNC path detected")
+        return False
+
     if _port_is_open(_FRONTEND_PORT):
         print(f"  Frontend already running on port {_FRONTEND_PORT}")
         return True
@@ -166,11 +180,10 @@ def start_frontend() -> bool:
     _log("start_frontend: starting...")
     log_fh = open(log_path, "a", encoding="utf-8")
     try:
+        cmd = f"cd '{_FRONTEND_DIR}' && npm run dev -- --host 127.0.0.1 --port {_FRONTEND_PORT}"
         _frontend_proc = subprocess.Popen(
-            ["npm", "run", "dev", "--host", "127.0.0.1", "--port", str(_FRONTEND_PORT)],
-            cwd=str(_FRONTEND_DIR),
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
+            ["/bin/bash", "-lc", cmd],
+            stdout=log_fh, stderr=subprocess.STDOUT,
             start_new_session=True,
         )
     except Exception as e:
@@ -185,6 +198,7 @@ def start_frontend() -> bool:
             return True
         time.sleep(0.5)
     print(f"  Frontend failed to start. Check: {log_path}")
+    _log("start_frontend: FAILED — timeout")
     return False
 
 
@@ -206,9 +220,7 @@ def start_all() -> bool:
 
 
 def stop_all() -> bool:
-    b = stop_backend()
-    f = stop_frontend()
-    return b and f
+    return stop_backend() and stop_frontend()
 
 
 def restart_all() -> bool:
