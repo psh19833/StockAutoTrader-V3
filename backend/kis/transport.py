@@ -37,10 +37,14 @@ class StubTransport:
     def __init__(self, responses: dict[str, dict] | None = None):
         self._responses = responses or {}
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.last_headers: dict[str, str] | None = None
+        self.call_details: list[dict[str, Any]] = []
 
     def get_json(self, path: str, params: dict | None = None,
                  headers: dict | None = None) -> TransportResponse:
         self.calls.append(("GET", path, params))
+        self.last_headers = dict(headers or {})
+        self.call_details.append({"method": "GET", "path": path, "payload": params, "headers": self.last_headers})
         if path in self._responses:
             return TransportResponse(200, self._responses[path])
         return TransportResponse(404, {"error": "not_found"})
@@ -48,6 +52,8 @@ class StubTransport:
     def post_json(self, path: str, json_data: dict | None = None,
                   headers: dict | None = None) -> TransportResponse:
         self.calls.append(("POST", path, json_data))
+        self.last_headers = dict(headers or {})
+        self.call_details.append({"method": "POST", "path": path, "payload": json_data, "headers": self.last_headers})
         if path in self._responses:
             return TransportResponse(200, self._responses[path])
         return TransportResponse(404, {"error": "not_found"})

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+from kis.auth_headers import build_kis_auth_headers, validate_prod_vps_alignment
 from kis.credentials import KisCredentials
 from kis.transport import KisTransport, TransportResponse
 
@@ -110,6 +111,7 @@ class WsApprovalKey:
     transport: KisTransport
     _approval_key: Optional[str] = field(default=None, init=False, repr=False)
     _issued_at: Optional[datetime] = field(default=None, init=False, repr=False)
+    _diagnostic_warning_code: str = field(default="", init=False, repr=False)
 
     def issue(self) -> str:
         """approval_key 발급.
@@ -121,8 +123,10 @@ class WsApprovalKey:
             DataUnavailable: 발급 실패 시
         """
         request_body = ApproveRequestBuilder.build(self.credentials)
+        alignment = validate_prod_vps_alignment(self.credentials.base_url)
+        self._diagnostic_warning_code = alignment.warning_code
         resp: TransportResponse = self.transport.post_json(
-            "/oauth2/Approval", json_data=request_body
+            "/oauth2/Approval", json_data=request_body, headers=build_kis_auth_headers()
         )
         parsed = ApprovalResponse.parse(resp.body)
 
