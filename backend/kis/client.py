@@ -45,23 +45,15 @@ class KisClient:
         transport = None,
         app_key: str = "",
         app_secret: str = "",
-        allow_order_endpoints: bool = False,
     ):
         self.base_url = base_url or KIS_REAL_BASE_URL
         self.rate_limiter = rate_limiter or KisRateLimiter()
         self.auth_manager = auth_manager or KisAuthManager(app_key=app_key, app_secret=app_secret)
         self.source_policy = source_policy or SourcePolicy()
         self._transport = transport
-        self._allow_order_endpoints = bool(allow_order_endpoints)
 
     def _check_order_endpoint(self, path: str) -> None:
-        """주문 endpoint 호출 차단 (full URL 우회 방지).
-
-        allow_order_endpoints=True 인 경우에만 예외적으로 허용한다.
-        """
-        if self._allow_order_endpoints:
-            return
-
+        """주문 endpoint 호출 차단 (full URL 우회 방지)"""
         from kis.errors import OrderEndpointBlockedError
         from urllib.parse import urlparse
 
@@ -105,7 +97,7 @@ class KisClient:
         from kis.endpoints import get_endpoint, EndpointNotFoundError
         try:
             ep = get_endpoint(name_or_path)
-            if ep.is_order_endpoint and not self._allow_order_endpoints:
+            if ep.is_order_endpoint:
                 from kis.errors import OrderEndpointBlockedError
                 raise OrderEndpointBlockedError(f"Order endpoint blocked: {name_or_path}")
             return ep.path, ep.tr_id
