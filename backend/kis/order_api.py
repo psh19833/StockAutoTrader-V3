@@ -6,7 +6,9 @@ All methods require SafetyGate approval before calling KIS.
 from __future__ import annotations
 
 from typing import Optional, Protocol
+import os
 
+from kis.transport import RealTransport
 from safety.live_order_safety_gate import SafetyGateResult
 
 BUY_TR_ID = "TTTC0012U"
@@ -37,6 +39,65 @@ class CashOrderSubmitter(Protocol):
     def submit_cash_order(self, payload: dict, tr_id: str) -> "OrderSubmitResult": ...
 
 
+class RealCashOrderSubmitter:
+    """Real KIS cash-order submitter.
+
+    Uses RealTransport with explicit order-endpoint allowance.
+    Token is issued per submit call (simple/robust one-shot flow).
+    """
+
+    def __init__(self):
+        self._app_key = os.getenv("KIS_APP_KEY", "")
+        self._app_secret = os.getenv("KIS_APP_SECRET", "")
+        self._base_url = os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+        self._transport = RealTransport(base_url=self._base_url, timeout=30, allow_order_endpoints=True)
+
+    def _issue_access_token(self) -> str:
+        import urllib.request
+        import json
+
+        token_url = f"{self._base_url}/oauth2/tokenP"
+        body = json.dumps({
+            "grant_type": "client_credentials",
+            "appkey": self._app_key,
+            "appsecret": self._app_secret,
+        }).encode("utf-8")
+        req = urllib.request.Request(token_url, data=body, method="POST")
+        req.add_header("content-type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return str(data.get("access_token", ""))
+        except Exception:
+            return ""
+
+    def submit_cash_order(self, payload: dict, tr_id: str) -> "OrderSubmitResult":
+        access_token = self._issue_access_token()
+        if not access_token:
+            return OrderSubmitResult(False, "", "ACCESS_TOKEN_ISSUE_FAILED", "ACCESS_TOKEN_ISSUE_FAILED")
+
+        headers = {
+            "authorization": f"Bearer {access_token}",
+            "appkey": self._app_key,
+            "appsecret": self._app_secret,
+            "tr_id": tr_id,
+            "custtype": "P",
+            "content-type": "application/json",
+        }
+        resp = self._transport.post_json("/uapi/domestic-stock/v1/trading/order-cash", payload, headers=headers)
+        body = resp.body if isinstance(resp.body, dict) else {}
+
+        ok = str(body.get("rt_cd", "")) == "0" and resp.status_code == 200
+        if ok:
+            out = body.get("output", {}) if isinstance(body.get("output"), dict) else {}
+            order_no = str(out.get("ODNO", "") or out.get("odno", "") or body.get("odno", ""))
+            return OrderSubmitResult(success=True, order_number=order_no, message="ORDER_SUBMITTED", error_type="")
+
+        msg = str(body.get("msg1", body.get("error", "ORDER_SUBMIT_FAILED")))
+        code = str(body.get("msg_cd", "ORDER_SUBMIT_FAILED"))
+        return OrderSubmitResult(success=False, order_number="", message=msg, error_type=code)
+
+
 def build_cash_order_payload(
     symbol: str,
     side: str,
@@ -46,11 +107,12 @@ def build_cash_order_payload(
 ) -> dict:
     """Build KIS cash order payload with uppercase keys per KIS spec."""
     tr_id = BUY_TR_ID if side.upper() == "BUY" else SELL_TR_ID
+    ord_dvsn = "01" if price <= 0 else "00"
     return {
         "CANO": account_no.replace("-", "")[:8] if account_no else "",
         "ACNT_PRDT_CD": "01",
         "PDNO": symbol,
-        "ORD_DVSN": "00",  # 지정가
+        "ORD_DVSN": ord_dvsn,  # 01 시장가, 00 지정가
         "ORD_QTY": str(qty),
         "ORD_UNPR": str(price) if price > 0 else "0",
         "CTAC_TLNO": "",

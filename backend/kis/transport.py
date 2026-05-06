@@ -66,9 +66,10 @@ class RealTransport:
     주문 endpoint는 get_json/post_json 진입 시 차단된다.
     """
 
-    def __init__(self, base_url: str = "", timeout: int = 30):
+    def __init__(self, base_url: str = "", timeout: int = 30, allow_order_endpoints: bool = False):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._allow_order_endpoints = bool(allow_order_endpoints)
 
     def _full_url(self, path: str) -> str:
         if path.startswith("http"):
@@ -76,6 +77,9 @@ class RealTransport:
         return f"{self._base_url}{path}"
 
     def _check_order_endpoint(self, path: str) -> None:
+        if self._allow_order_endpoints:
+            return
+
         from kis.errors import OrderEndpointBlockedError
         from urllib.parse import urlparse
 
