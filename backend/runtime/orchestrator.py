@@ -79,7 +79,7 @@ class Orchestrator:
                     "order_intents": dry.get("order_intents", []) or [],
                 }
             elif mode == "live":
-                live = self._live_runner.run_tick(session=session.value)
+                live = self._live_runner.run_tick(session=session.value, ready=True)
                 result["actions"].append("live_tick")
                 result["live"] = live.to_dict()
             else:

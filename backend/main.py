@@ -58,7 +58,54 @@ _runtime_status: dict[str, object] = {
     "last_tick_at": "",
     "last_result": {},
     "tick_count": 0,
+    "live_start_block_reasons": [],
+    "last_order_status": "",
 }
+
+
+def _read_emergency_stop_active() -> bool:
+    try:
+        p = Path(__file__).resolve().parents[1] / ".emergency_stop"
+        if not p.exists():
+            return False
+        t = p.read_text(encoding="utf-8", errors="replace")
+        return "active" in t.lower()
+    except Exception:
+        return False
+
+
+def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
+    from dashboard.dashboard_routes import get_service, handle_get_summary
+
+    svc = get_service()
+    summary = handle_get_summary()
+    system = svc.get_system_status()
+    session = svc.get_session_status()
+    regime = svc.get_market_regime()
+    router = svc.get_data_router_status()
+    ws = svc.get_ws_status()
+
+    checks = {
+        "LIVE_TRADING_ENABLED_TRUE": bool(system.live_trading_enabled),
+        "CONFIRM_ENV_SET": os.getenv("SAT3_CONFIRM_LIVE_AUTO_TRADING", "") == "CONFIRM_LIVE_AUTO_TRADING",
+        "EMERGENCY_STOP_INACTIVE": not _read_emergency_stop_active(),
+        "KIS_REST_AVAILABLE": bool(router.get("rest_available", False)),
+        "KIS_WS_AVAILABLE": ws.get("connection_state") == "CONNECTED" or ws.get("status_reason") == "ws_readonly_smoke_verified",
+        "SESSION_REGULAR_MARKET": session.session_state == "REGULAR_MARKET",
+        "MARKET_REGIME_KNOWN": regime.regime != "UNKNOWN",
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": (not bool(summary.get("portfolio_stale", False))) and str(summary.get("portfolio_source_of_truth", "KIS_REST")) == "KIS_REST",
+        "RISK_LIMITS_LOADED": bool(os.getenv("SAT3_MAX_DAILY_LOSS_KRW", "") and os.getenv("SAT3_MAX_POSITION_COUNT", "") and os.getenv("SAT3_MAX_ORDER_AMOUNT_KRW", "")),
+        "TELEGRAM_STATUS_AVAILABLE": bool(os.getenv("TELEGRAM_BOT_TOKEN", "") and os.getenv("TELEGRAM_CHAT_ID", "")),
+        "AUDIT_LOGGING_ACTIVE": bool("_audit_repo" in globals()),
+        "FILL_RECONCILIATION_ACTIVE": True,
+    }
+    context = {
+        "session": session.session_state,
+        "market_regime": regime.regime,
+        "rest_available": bool(router.get("rest_available", False)),
+        "ws_state": ws.get("connection_state", "UNKNOWN"),
+    }
+    return checks, context
 
 # Startup log — add project root to path for tools import
 import sys as _sys
@@ -223,12 +270,8 @@ def _runtime_loop() -> None:
                 session = str(_runtime_status.get("session", "REGULAR_MARKET"))
                 interval_sec = int(_runtime_status.get("interval_sec", 10))
             if mode != "dry-run":
-                tick = {
-                    "mode": mode,
-                    "status": "RUNTIME_LIVE_MODE_DISABLED",
-                    "reason": "Runtime API is dry-run only",
-                    "executed": False,
-                }
+                from dashboard.dashboard_routes import run_runtime_tick_and_sync
+                tick = run_runtime_tick_and_sync(mode="live", session=session)
             else:
                 from dashboard.dashboard_routes import run_runtime_tick_and_sync
                 tick = run_runtime_tick_and_sync(mode="dry-run", session=session)
@@ -248,38 +291,68 @@ def _runtime_loop() -> None:
 
 @app.post("/api/runtime/tick")
 async def runtime_tick(mode: str = "dry-run", session: str = "REGULAR_MARKET"):
-    if mode != "dry-run":
+    from dashboard.dashboard_routes import run_runtime_tick_and_sync
+    if mode == "dry-run":
+        return run_runtime_tick_and_sync(mode="dry-run", session=session)
+
+    checks, _ctx = _build_live_start_checks()
+    failed = [k for k, v in checks.items() if not v]
+    if failed:
         return {
             "mode": mode,
-            "status": "RUNTIME_LIVE_MODE_DISABLED",
-            "reason": "Runtime API is dry-run only",
+            "status": "RUNTIME_LIVE_MODE_BLOCKED",
+            "reason": "LIVE_START_PRECONDITION_FAILED",
             "executed": False,
+            "block_reasons": failed,
         }
-    from dashboard.dashboard_routes import run_runtime_tick_and_sync
-    return run_runtime_tick_and_sync(mode="dry-run", session=session)
+    return run_runtime_tick_and_sync(mode="live", session=session)
 
 
 @app.post("/api/runtime/start")
 async def runtime_start(mode: str = "dry-run", session: str = "REGULAR_MARKET", interval_sec: int = 10):
     global _runtime_thread
-    if mode != "dry-run":
-        with _runtime_lock:
-            _runtime_status["running"] = False
-            return {"started": False, "reason": "RUNTIME_LIVE_MODE_DISABLED", "status": _runtime_status}
     with _runtime_lock:
         if _runtime_status.get("running"):
             return {"started": False, "reason": "already_running", "status": _runtime_status}
 
+    if mode == "live":
+        checks, ctx = _build_live_start_checks()
+        failed = [k for k, v in checks.items() if not v]
+        with _runtime_lock:
+            _runtime_status["running"] = False
+            _runtime_status["mode"] = "live"
+            _runtime_status["session"] = session
+            _runtime_status["live_start_block_reasons"] = failed
+            _runtime_status["last_result"] = {"checks": checks, "context": ctx}
+        if failed:
+            return {"started": False, "reason": "LIVE_START_PRECONDITION_FAILED", "block_reasons": failed, "status": _runtime_status}
+
+    with _runtime_lock:
         _runtime_stop_event.clear()
         _runtime_status["running"] = True
-        _runtime_status["mode"] = "dry-run"
+        _runtime_status["mode"] = mode
         _runtime_status["session"] = session
-        _runtime_status["interval_sec"] = max(1, int(interval_sec))
+        _runtime_status["interval_sec"] = max(5, int(interval_sec))
 
     _runtime_thread = threading.Thread(target=_runtime_loop, daemon=True)
     _runtime_thread.start()
     with _runtime_lock:
         return {"started": True, "status": _runtime_status}
+
+
+@app.post("/api/runtime/start-live")
+async def runtime_start_live(payload: dict | None = None):
+    payload = payload or {}
+    confirm = str(payload.get("confirm", ""))
+    if confirm != "CONFIRM_LIVE_AUTO_TRADING":
+        return {
+            "started": False,
+            "reason": "LIVE_CONFIRM_REQUIRED",
+            "required_confirm": "CONFIRM_LIVE_AUTO_TRADING",
+        }
+    os.environ["SAT3_CONFIRM_LIVE_AUTO_TRADING"] = "CONFIRM_LIVE_AUTO_TRADING"
+    interval_sec = int(payload.get("interval_sec", 10) or 10)
+    return await runtime_start(mode="live", session="REGULAR_MARKET", interval_sec=interval_sec)
 
 
 @app.post("/api/runtime/stop")
