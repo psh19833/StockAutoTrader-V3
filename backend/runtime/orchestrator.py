@@ -19,7 +19,7 @@ class Orchestrator:
         self._cache = MarketCache()
         self._router = MarketDataRouter(self._cache)
         self._dry_runner = DryDecisionRunner(self._router)
-        live_runner_enabled = os.getenv("SAT3_ENABLE_LIVE_RUNNER", "true").lower() == "true"
+        live_runner_enabled = os.getenv("SAT3_ENABLE_LIVE_RUNNER", "false").lower() == "true"
         self._live_runner = LiveTradingRunner(configured=live_runner_enabled)
         self._state = "stopped"
         self._last_tick: Optional[str] = None

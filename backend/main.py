@@ -222,8 +222,16 @@ def _runtime_loop() -> None:
                 mode = str(_runtime_status.get("mode", "dry-run"))
                 session = str(_runtime_status.get("session", "REGULAR_MARKET"))
                 interval_sec = int(_runtime_status.get("interval_sec", 10))
-            from dashboard.dashboard_routes import run_runtime_tick_and_sync
-            tick = run_runtime_tick_and_sync(mode=mode, session=session)
+            if mode != "dry-run":
+                tick = {
+                    "mode": mode,
+                    "status": "RUNTIME_LIVE_MODE_DISABLED",
+                    "reason": "Runtime API is dry-run only",
+                    "executed": False,
+                }
+            else:
+                from dashboard.dashboard_routes import run_runtime_tick_and_sync
+                tick = run_runtime_tick_and_sync(mode="dry-run", session=session)
             with _runtime_lock:
                 _runtime_status["last_result"] = tick
                 _runtime_status["tick_count"] = int(_runtime_status.get("tick_count", 0)) + 1
@@ -240,20 +248,31 @@ def _runtime_loop() -> None:
 
 @app.post("/api/runtime/tick")
 async def runtime_tick(mode: str = "dry-run", session: str = "REGULAR_MARKET"):
+    if mode != "dry-run":
+        return {
+            "mode": mode,
+            "status": "RUNTIME_LIVE_MODE_DISABLED",
+            "reason": "Runtime API is dry-run only",
+            "executed": False,
+        }
     from dashboard.dashboard_routes import run_runtime_tick_and_sync
-    return run_runtime_tick_and_sync(mode=mode, session=session)
+    return run_runtime_tick_and_sync(mode="dry-run", session=session)
 
 
 @app.post("/api/runtime/start")
 async def runtime_start(mode: str = "dry-run", session: str = "REGULAR_MARKET", interval_sec: int = 10):
     global _runtime_thread
+    if mode != "dry-run":
+        with _runtime_lock:
+            _runtime_status["running"] = False
+            return {"started": False, "reason": "RUNTIME_LIVE_MODE_DISABLED", "status": _runtime_status}
     with _runtime_lock:
         if _runtime_status.get("running"):
             return {"started": False, "reason": "already_running", "status": _runtime_status}
 
         _runtime_stop_event.clear()
         _runtime_status["running"] = True
-        _runtime_status["mode"] = mode
+        _runtime_status["mode"] = "dry-run"
         _runtime_status["session"] = session
         _runtime_status["interval_sec"] = max(1, int(interval_sec))
 
