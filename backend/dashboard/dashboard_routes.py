@@ -104,12 +104,17 @@ def handle_get_summary() -> dict[str, Any]:
         pass
 
     system = svc.get_system_status()
+    session_view = svc.get_session_status()
+    regime_view = svc.get_market_regime()
+    ws_view = svc.get_ws_status()
+    data_router = svc.get_data_router_status()
+
     summary = build_dashboard_summary(
         live_trading_enabled=system.live_trading_enabled,
         emergency_stop=system.emergency_stop,
-        session_state="REGULAR_MARKET",
-        market_regime="BULL",
-        allow_new_buy=True,
+        session_state=session_view.session_state,
+        market_regime=regime_view.regime,
+        allow_new_buy=bool(session_view.buy_allowed and regime_view.allow_new_buy),
         scanner_candidates=svc.get_candidates(),
         quant_scores=svc.get_quant_scores(),
         strategy_signals=svc.get_strategy_signals(),
@@ -119,21 +124,30 @@ def handle_get_summary() -> dict[str, Any]:
     )
     payload = _to_dict(summary)
 
-    # Include runtime state in summary for dashboard observability.
     try:
         import main as _main
-        payload["runtime_status"] = dict(_main._runtime_status)  # read-only snapshot
-    except Exception:
-        payload["runtime_status"] = {
-            "running": False,
-            "reason": "runtime_status_unavailable",
+        payload["runtime_status"] = dict(_main._runtime_status)
+        payload["runtime_live_mode_policy"] = {
+            "runtime_api_mode": str(_main._runtime_status.get("mode", "dry-run")),
+            "live_start_block_reasons": list(_main._runtime_status.get("live_start_block_reasons", []) or []),
+            "reason": "Live requires strict preconditions",
         }
+    except Exception:
+        payload["runtime_status"] = {"running": False, "reason": "runtime_status_unavailable"}
+        payload["runtime_live_mode_policy"] = {"runtime_api_mode": "unknown"}
 
-    payload["runtime_live_mode_policy"] = {
-        "runtime_api_mode": "dry-run-only",
-        "live_mode_request_status": "RUNTIME_LIVE_MODE_DISABLED",
-        "reason": "Runtime API is dry-run only",
-    }
+    payload["ws_status"] = ws_view
+    payload["data_router"] = data_router
+    payload["session"] = session_view
+    payload["market_regime"] = regime_view
+    payload["live_auto_ready"] = bool(
+        system.live_trading_enabled
+        and (session_view.session_state == "REGULAR_MARKET")
+        and (regime_view.regime != "UNKNOWN")
+        and bool(data_router.get("rest_available", False))
+        and (ws_view.get("connection_state") == "CONNECTED" or ws_view.get("status_reason") == "ws_readonly_smoke_verified")
+        and (not system.emergency_stop)
+    )
     return payload
 
 
