@@ -92,7 +92,11 @@ def run_smoke_with_transport(
     try:
         price = facade.get_current_price(symbol)
         if price.get("data_available"):
-            results["price"] = f"OK ({price.get('current_price', '?')} won)"
+            p = price.get("current_price", "?")
+            results["price"] = f"OK ({p} won)"
+            results["last_price"] = p
+            results["change_rate"] = price.get("change_rate")
+            results["observed_at"] = datetime.now(timezone.utc).isoformat()
         else:
             results["price"] = "DataUnavailable"
     except Exception as e:
@@ -148,6 +152,9 @@ def _save_snapshot(result: dict[str, Any]) -> None:
             "symbol": result.get("symbol", "005930"),
             "token": result.get("token", ""),
             "price": result.get("price", ""),
+            "last_price": result.get("last_price", sample_price),
+            "change_rate": result.get("change_rate"),
+            "observed_at": result.get("observed_at", result.get("timestamp", "")),
             "balance": result.get("balance", ""),
             "success": str(result.get("token", "")).startswith("OK") and str(result.get("price", "")).startswith("OK"),
             "sample_price": sample_price,

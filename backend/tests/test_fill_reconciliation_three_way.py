@@ -47,3 +47,14 @@ def test_rest_price_mismatch_keeps_unconfirmed_with_reason():
     assert rec is not None
     assert rec.status == "MISMATCH"
     assert rec.mismatch_reason == "price_mismatch_ws_vs_rest"
+
+
+def test_rest_volume_mismatch_keeps_unconfirmed_with_reason():
+    r = FillReconciler()
+    r.on_ws_fill_notice(symbol="005930", order_number="ord3", fill_price=100, fill_volume=2)
+    r.on_rest_fill_check(order_number="ord3", confirmed=True, rest_fill_price=100, rest_fill_volume=1)
+    assert r.is_confirmed("ord3") is False
+    rec = r.get_fill("ord3")
+    assert rec is not None
+    assert rec.status == "MISMATCH"
+    assert rec.mismatch_reason == "volume_mismatch_ws_vs_rest"

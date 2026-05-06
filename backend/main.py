@@ -74,6 +74,42 @@ def _read_emergency_stop_active() -> bool:
         return False
 
 
+def _is_set(name: str) -> bool:
+    return os.getenv(name, "").strip() != ""
+
+
+def _risk_limits_loaded() -> tuple[bool, list[str]]:
+    def _parse_pos_int(name: str) -> tuple[bool, int | None]:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return False, None
+        try:
+            v = int(raw)
+        except Exception:
+            return False, None
+        return (v > 0), (v if v > 0 else None)
+
+    ok_daily, _ = _parse_pos_int("SAT3_MAX_DAILY_LOSS_KRW")
+    ok_pos, _ = _parse_pos_int("SAT3_MAX_POSITION_COUNT")
+    ok_order_amt, _ = _parse_pos_int("SAT3_MAX_ORDER_AMOUNT_KRW")
+    ok_symbol_amt, _ = _parse_pos_int("SAT3_MAX_AMOUNT_PER_SYMBOL_KRW")
+    ok_pending, _ = _parse_pos_int("SAT3_MAX_PENDING_ORDERS")
+
+    dup_raw = os.getenv("SAT3_DUPLICATE_ORDER_GUARD_ENABLED", "").strip().lower()
+    ok_dup = dup_raw in {"true", "false", "1", "0", "yes", "no", "on", "off"}
+
+    required = {
+        "SAT3_MAX_DAILY_LOSS_KRW": ok_daily,
+        "SAT3_MAX_POSITION_COUNT": ok_pos,
+        "SAT3_MAX_ORDER_AMOUNT_KRW": ok_order_amt,
+        "SAT3_MAX_AMOUNT_PER_SYMBOL_KRW": ok_symbol_amt,
+        "SAT3_MAX_PENDING_ORDERS": ok_pending,
+        "SAT3_DUPLICATE_ORDER_GUARD_ENABLED": ok_dup,
+    }
+    missing_or_invalid = [k for k, ok in required.items() if not ok]
+    return len(missing_or_invalid) == 0, missing_or_invalid
+
+
 def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
     from dashboard.dashboard_routes import get_service, handle_get_summary
 
@@ -84,6 +120,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
     regime = svc.get_market_regime()
     router = svc.get_data_router_status()
     ws = svc.get_ws_status()
+    risk_loaded, risk_missing = _risk_limits_loaded()
 
     checks = {
         "LIVE_TRADING_ENABLED_TRUE": bool(system.live_trading_enabled),
@@ -94,7 +131,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "SESSION_REGULAR_MARKET": session.session_state == "REGULAR_MARKET",
         "MARKET_REGIME_KNOWN": regime.regime != "UNKNOWN",
         "PORTFOLIO_SOURCE_KIS_REST_FRESH": (not bool(summary.get("portfolio_stale", False))) and str(summary.get("portfolio_source_of_truth", "KIS_REST")) == "KIS_REST",
-        "RISK_LIMITS_LOADED": bool(os.getenv("SAT3_MAX_DAILY_LOSS_KRW", "") and os.getenv("SAT3_MAX_POSITION_COUNT", "") and os.getenv("SAT3_MAX_ORDER_AMOUNT_KRW", "")),
+        "RISK_LIMITS_LOADED": risk_loaded,
         "TELEGRAM_STATUS_AVAILABLE": bool(os.getenv("TELEGRAM_BOT_TOKEN", "") and os.getenv("TELEGRAM_CHAT_ID", "")),
         "AUDIT_LOGGING_ACTIVE": bool("_audit_repo" in globals()),
         "FILL_RECONCILIATION_ACTIVE": True,
@@ -104,6 +141,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "market_regime": regime.regime,
         "rest_available": bool(router.get("rest_available", False)),
         "ws_state": ws.get("connection_state", "UNKNOWN"),
+        "risk_limits_missing": risk_missing,
     }
     return checks, context
 
@@ -350,7 +388,7 @@ async def runtime_start_live(payload: dict | None = None):
             "reason": "LIVE_CONFIRM_REQUIRED",
             "required_confirm": "CONFIRM_LIVE_AUTO_TRADING",
         }
-    os.environ["SAT3_CONFIRM_LIVE_AUTO_TRADING"] = "CONFIRM_LIVE_AUTO_TRADING"
+    # 운영 정책: CONFIRM 환경변수는 운영자가 수동으로 설정해야 하며 API가 자동 설정하지 않는다.
     interval_sec = int(payload.get("interval_sec", 10) or 10)
     return await runtime_start(mode="live", session="REGULAR_MARKET", interval_sec=interval_sec)
 

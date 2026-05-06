@@ -4,9 +4,10 @@
 모든 조회는 Read-Only — 주문 실행 없음.
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dt_time, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 import os
 
 from dashboard.dashboard_models import (
@@ -16,6 +17,14 @@ from dashboard.dashboard_models import (
     PortfolioView, EodReportView, AuditTimelineView,
     DashboardSummary,
 )
+
+# Best-effort dotenv load for standalone dashboard service usage
+try:
+    from dotenv import load_dotenv  # type: ignore
+    _env_path = Path(__file__).resolve().parents[2] / ".env"
+    load_dotenv(_env_path)
+except Exception:
+    pass
 
 
 class DashboardService:
@@ -60,6 +69,24 @@ class DashboardService:
 
     def _load_ws_smoke_snapshot(self) -> dict[str, Any] | None:
         return self._load_json_file(self._data_dir() / "kis_ws_readonly_smoke_snapshot.json")
+
+    def _parse_iso_dt(self, raw: str) -> datetime | None:
+        try:
+            if not raw:
+                return None
+            t = str(raw).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(t)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            return None
+
+    def _is_snapshot_fresh(self, ts: str, max_age_sec: int = 180) -> bool:
+        dt = self._parse_iso_dt(ts)
+        if dt is None:
+            return False
+        return (datetime.now(timezone.utc) - dt) <= timedelta(seconds=max_age_sec)
 
     def _get_token_provider(self):
         if self._token_provider is not None:
@@ -111,17 +138,102 @@ class DashboardService:
             body = json.loads(resp.read().decode())
             out = body.get("output") or body.get("output1") or {}
             price = 0
+            change_rate = None
             if isinstance(out, dict):
                 v = out.get("stck_prpr") or out.get("prpr") or out.get("current_price") or 0
                 try:
                     price = int(float(str(v).replace(",", "")))
                 except Exception:
                     price = 0
+                cr = out.get("prdy_ctrt") or out.get("stck_prdy_ctrt") or out.get("change_rate")
+                if cr not in (None, ""):
+                    try:
+                        change_rate = float(str(cr).replace(",", ""))
+                    except Exception:
+                        change_rate = None
             if price > 0:
-                return {"data_available": True, "symbol": symbol, "current_price": price}
+                return {
+                    "data_available": True,
+                    "symbol": symbol,
+                    "current_price": price,
+                    "change_rate": change_rate,
+                }
             return {"data_available": False, "reason": "kis_price_unavailable"}
         except Exception as e:
             return {"data_available": False, "reason": f"probe_error:{type(e).__name__}"}
+
+    def _probe_kis_holiday_status(self) -> dict[str, Any]:
+        if not self._has_kis_credentials():
+            return {"data_available": False, "reason": "missing_credentials"}
+        try:
+            import json
+            import urllib.request
+
+            app_key = os.getenv("KIS_APP_KEY", "")
+            app_secret = os.getenv("KIS_APP_SECRET", "")
+            base_url = os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
+            token_provider = self._get_token_provider()
+            token = token_provider.issue_token()
+            access_token = token.access_token
+            if not access_token:
+                return {"data_available": False, "reason": "token_issue_failed"}
+
+            kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
+            ymd = kst_now.strftime("%Y%m%d")
+            holiday_url = (
+                f"{base_url}/uapi/domestic-stock/v1/quotations/inquire-holiday"
+                f"?BASS_DT={ymd}"
+            )
+            req = urllib.request.Request(holiday_url, method="GET")
+            req.add_header("authorization", f"Bearer {access_token}")
+            req.add_header("appkey", app_key)
+            req.add_header("appsecret", app_secret)
+            req.add_header("tr_id", "CTCA0903R")
+            resp = urllib.request.urlopen(req, timeout=8)
+            body = json.loads(resp.read().decode())
+
+            output = body.get("output") or body.get("output1") or body.get("output2") or []
+            items = output if isinstance(output, list) else [output] if isinstance(output, dict) else []
+            today = None
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("bass_dt", "")) == ymd:
+                    today = item
+                    break
+            open_flag = ""
+            if isinstance(today, dict):
+                open_flag = str(today.get("opnd_yn") or today.get("open_yn") or "").upper()
+
+            is_holiday = (open_flag == "N") if open_flag else (kst_now.weekday() >= 5)
+            return {
+                "data_available": True,
+                "trading_day": ymd,
+                "open_flag": open_flag,
+                "is_holiday": bool(is_holiday),
+                "source": "KIS_HOLIDAY_API",
+            }
+        except Exception as e:
+            try:
+                # 403 root-cause visibility without raw body leakage
+                import json
+                from urllib.error import HTTPError
+
+                if isinstance(e, HTTPError) and e.fp is not None:
+                    raw = e.fp.read().decode("utf-8", errors="replace")
+                    body = json.loads(raw)
+                    msg_cd = body.get("msg_cd") or body.get("error_code") or ""
+                    msg1 = body.get("msg1") or body.get("error_description") or ""
+                    return {
+                        "data_available": False,
+                        "reason": f"holiday_probe_http_{e.code}",
+                        "msg_cd": str(msg_cd),
+                        "msg1": str(msg1)[:160],
+                    }
+            except Exception:
+                pass
+            return {"data_available": False, "reason": f"holiday_probe_error:{type(e).__name__}"}
 
     def get_data_router_status(self) -> dict[str, Any]:
         ws = self.get_ws_status()
@@ -265,6 +377,10 @@ class DashboardService:
             return default
         return raw.strip().lower() in {"1", "true", "yes", "on", "y"}
 
+    def _is_kst_regular_market_window(self) -> bool:
+        kst_now = datetime.now(ZoneInfo("Asia/Seoul")).time()
+        return dt_time(9, 0) <= kst_now <= dt_time(15, 30)
+
     def _read_emergency_stop_state(self) -> bool:
         """Read project-level emergency stop state file.
 
@@ -294,20 +410,72 @@ class DashboardService:
         )
 
     def get_session_status(self) -> SessionStatusView:
-        # 추정 금지: 시간/휴장일 하드코딩 계산으로 상태를 단정하지 않는다.
-        # 실소스가 없으면 UNKNOWN + 차단으로만 노출한다.
         if self._session_status_override is not None:
             return self._session_status_override
 
         router = self.get_data_router_status()
         probe = self._probe_kis_price("005930")
-        if probe.get("data_available"):
+        holiday = self._probe_kis_holiday_status()
+        ws = self.get_ws_status()
+        rest_smoke = self._load_rest_smoke_snapshot() or {}
+
+        kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
+        in_window = self._is_kst_regular_market_window()
+        is_weekend = kst_now.weekday() >= 5
+        rest_verified = bool(rest_smoke.get("success", False)) and self._is_snapshot_fresh(str(rest_smoke.get("timestamp", "")), max_age_sec=300)
+        ws_verified = ws.get("status_reason") == "ws_readonly_smoke_verified"
+
+        if holiday.get("data_available"):
+            if bool(holiday.get("is_holiday", False)):
+                return SessionStatusView(
+                    session_state="CLOSED_HOLIDAY",
+                    buy_allowed=False,
+                    is_trading_day=False,
+                    reason="session_source=KIS_MARKET_STATUS",
+                    detail=f"KIS holiday source closed(open_flag={holiday.get('open_flag', '') or 'N/A'})",
+                )
+            if in_window and probe.get("data_available"):
+                return SessionStatusView(
+                    session_state="REGULAR_MARKET",
+                    buy_allowed=True,
+                    is_trading_day=True,
+                    reason="session_source=KIS_MARKET_STATUS",
+                    detail="KIS holiday open + KST regular window + KIS price available",
+                )
             return SessionStatusView(
-                session_state="UNKNOWN",
+                session_state="CLOSED_AFTER_MARKET",
                 buy_allowed=False,
                 is_trading_day=True,
-                reason="session_status_feed_partial",
-                detail=f"KIS 현재가 수신됨(005930={probe.get('current_price', 0)}), 세션상태 판독 어댑터 미연결",
+                reason="session_source=KIS_MARKET_STATUS",
+                detail="KIS holiday open but outside regular-market window",
+            )
+
+        # holiday source 실패 시 보조 근거 기반 판정(강제 오픈 금지)
+        if is_weekend:
+            return SessionStatusView(
+                session_state="CLOSED_HOLIDAY",
+                buy_allowed=False,
+                is_trading_day=False,
+                reason="session_source=KST_WEEKEND_FALLBACK",
+                detail=f"holiday source unavailable={holiday.get('reason', 'unknown')}; weekend fallback applied",
+            )
+
+        if in_window and probe.get("data_available") and (rest_verified or ws_verified):
+            return SessionStatusView(
+                session_state="REGULAR_MARKET",
+                buy_allowed=True,
+                is_trading_day=True,
+                reason="session_source=KST_TIME_WITH_REST_VERIFIED",
+                detail=f"holiday source unavailable={holiday.get('reason', 'unknown')}; in KST regular window with verified readonly source(rest_verified={rest_verified}, ws_verified={ws_verified})",
+            )
+
+        if probe.get("data_available") and not in_window:
+            return SessionStatusView(
+                session_state="CLOSED_AFTER_MARKET",
+                buy_allowed=False,
+                is_trading_day=True,
+                reason="session_source=KST_TIME_WITH_PRICE_ONLY",
+                detail=f"holiday source unavailable={holiday.get('reason', 'unknown')}; price available but outside market window",
             )
 
         return SessionStatusView(
@@ -319,20 +487,90 @@ class DashboardService:
         )
 
     def get_market_regime(self) -> MarketRegimeView:
-        # 추정 금지: 시간/요일 기반 더미 BULL 판정 금지.
         if self._market_regime_override is not None:
             return self._market_regime_override
 
         router = self.get_data_router_status()
         probe = self._probe_kis_price("005930")
-        if probe.get("data_available"):
+        rest_smoke = self._load_rest_smoke_snapshot() or {}
+
+        # 1) 실시간 probe 우선
+        change_rate = probe.get("change_rate") if probe.get("data_available") else None
+        if isinstance(change_rate, (int, float)):
+            cr = float(change_rate)
+            if cr >= 1.5:
+                return MarketRegimeView(
+                    regime="BULL",
+                    allow_new_buy=True,
+                    total_score=70.0,
+                    candidate_score_adjustment=5.0,
+                    reason="market_regime_source=KIS_REALTIME_PRICE",
+                    factors=f"KIS realtime change_rate={cr:.2f}% (sample_symbol=005930)",
+                )
+            if cr <= -1.5:
+                return MarketRegimeView(
+                    regime="BEAR",
+                    allow_new_buy=False,
+                    total_score=30.0,
+                    candidate_score_adjustment=-10.0,
+                    reason="market_regime_source=KIS_REALTIME_PRICE",
+                    factors=f"KIS realtime change_rate={cr:.2f}% (sample_symbol=005930)",
+                )
+            return MarketRegimeView(
+                regime="NEUTRAL",
+                allow_new_buy=True,
+                total_score=55.0,
+                candidate_score_adjustment=0.0,
+                reason="market_regime_source=KIS_REALTIME_PRICE",
+                factors=f"KIS realtime change_rate={cr:.2f}% (sample_symbol=005930)",
+            )
+
+        # 2) readonly REST smoke snapshot fallback (fresh only)
+        snap_ts = str(rest_smoke.get("timestamp", ""))
+        if bool(rest_smoke.get("success", False)) and self._is_snapshot_fresh(snap_ts, max_age_sec=300):
+            snap_cr = rest_smoke.get("change_rate")
+            if isinstance(snap_cr, (int, float)):
+                cr = float(snap_cr)
+                if cr >= 1.5:
+                    regime = "BULL"
+                    allow = True
+                    score = 70.0
+                    adj = 5.0
+                elif cr <= -1.5:
+                    regime = "BEAR"
+                    allow = False
+                    score = 30.0
+                    adj = -10.0
+                else:
+                    regime = "NEUTRAL"
+                    allow = True
+                    score = 55.0
+                    adj = 0.0
+                return MarketRegimeView(
+                    regime=regime,
+                    allow_new_buy=allow,
+                    total_score=score,
+                    candidate_score_adjustment=adj,
+                    reason="market_regime_source=REST_SMOKE_SNAPSHOT",
+                    factors=f"snapshot change_rate={cr:.2f}% observed_at={rest_smoke.get('observed_at','')}",
+                )
             return MarketRegimeView(
                 regime="UNKNOWN",
                 allow_new_buy=False,
                 total_score=0.0,
                 candidate_score_adjustment=0.0,
                 reason="market_regime_feed_partial",
-                factors=f"KIS 현재가 수신됨(005930={probe.get('current_price', 0)}), 시장국면 엔진 실데이터 연동 대기",
+                factors="REST smoke snapshot is fresh but change_rate missing",
+            )
+
+        if rest_smoke:
+            return MarketRegimeView(
+                regime="UNKNOWN",
+                allow_new_buy=False,
+                total_score=0.0,
+                candidate_score_adjustment=0.0,
+                reason="market_regime_snapshot_stale_or_invalid",
+                factors=f"snapshot freshness failed (timestamp={snap_ts or 'N/A'})",
             )
 
         return MarketRegimeView(
