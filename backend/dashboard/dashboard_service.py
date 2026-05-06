@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+import os
 
 from dashboard.dashboard_models import (
     SystemStatusView, SessionStatusView, MarketRegimeView,
@@ -33,14 +35,104 @@ class DashboardService:
         self._ws_status_provider = None
         self._session_status_override: SessionStatusView | None = None
         self._market_regime_override: MarketRegimeView | None = None
+        self._token_provider = None
+
+    def _has_kis_credentials(self) -> bool:
+        return bool(os.getenv("KIS_APP_KEY", "") and os.getenv("KIS_APP_SECRET", ""))
+
+    def _get_token_provider(self):
+        if self._token_provider is not None:
+            return self._token_provider
+
+        from kis.token_provider import KisTokenProvider
+        from kis.transport import RealTransport
+
+        app_key = os.getenv("KIS_APP_KEY", "")
+        app_secret = os.getenv("KIS_APP_SECRET", "")
+        base_url = os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
+        transport = RealTransport(base_url=base_url, timeout=8)
+        self._token_provider = KisTokenProvider(
+            app_key=app_key,
+            app_secret=app_secret,
+            base_url=base_url,
+            transport=transport,
+        )
+        return self._token_provider
+
+    def _probe_kis_price(self, symbol: str = "005930") -> dict[str, Any]:
+        if not self._has_kis_credentials():
+            return {"data_available": False, "reason": "missing_credentials"}
+        try:
+            import json
+            import urllib.request
+
+            app_key = os.getenv("KIS_APP_KEY", "")
+            app_secret = os.getenv("KIS_APP_SECRET", "")
+            base_url = os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
+            token_provider = self._get_token_provider()
+            token = token_provider.issue_token()
+            access_token = token.access_token
+            if not access_token:
+                return {"data_available": False, "reason": "token_issue_failed"}
+
+            price_url = (
+                f"{base_url}/uapi/domestic-stock/v1/quotations/inquire-price"
+                f"?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD={symbol}"
+            )
+            req = urllib.request.Request(price_url, method="GET")
+            req.add_header("authorization", f"Bearer {access_token}")
+            req.add_header("appkey", app_key)
+            req.add_header("appsecret", app_secret)
+            req.add_header("tr_id", "FHKST01010100")
+            resp = urllib.request.urlopen(req, timeout=8)
+            body = json.loads(resp.read().decode())
+            out = body.get("output") or body.get("output1") or {}
+            price = 0
+            if isinstance(out, dict):
+                v = out.get("stck_prpr") or out.get("prpr") or out.get("current_price") or 0
+                try:
+                    price = int(float(str(v).replace(",", "")))
+                except Exception:
+                    price = 0
+            if price > 0:
+                return {"data_available": True, "symbol": symbol, "current_price": price}
+            return {"data_available": False, "reason": "kis_price_unavailable"}
+        except Exception as e:
+            return {"data_available": False, "reason": f"probe_error:{type(e).__name__}"}
+
+    def get_data_router_status(self) -> dict[str, Any]:
+        ws = self.get_ws_status()
+        probe = self._probe_kis_price("005930")
+        return {
+            "ws_connected": ws.get("connection_state") == "CONNECTED",
+            "rest_available": bool(probe.get("data_available", False)),
+            "stale_warnings": [] if probe.get("data_available", False) else [str(probe.get("reason", "rest_unavailable"))],
+            "source": "KIS_API_WS" if ws.get("connection_state") == "CONNECTED" else "KIS_API_REST",
+            "sample_symbol": probe.get("symbol", "005930"),
+            "sample_price": probe.get("current_price", 0),
+        }
 
     # ── 데이터 주입 (Stub 용) ──
 
     def inject_candidates(self, items: list[ScannerCandidateView]) -> None:
         self._candidates = items
 
+    def inject_quant_scores(self, items: list[QuantScoreView]) -> None:
+        self._quant_scores = items
+
+    def inject_strategy_signals(self, items: list[StrategySignalView]) -> None:
+        self._strategy_signals = items
+
     def inject_risk_decisions(self, items: list[RiskDecisionView]) -> None:
         self._risk_decisions = items
+
+    def inject_orders(self, items: list[OrderStatusView]) -> None:
+        self._orders = items
+
+    def inject_fills(self, items: list[FillStatusView]) -> None:
+        self._fills = items
 
     def inject_audit_events(self, items: list[AuditTimelineView]) -> None:
         self._audit_events = items
@@ -120,10 +212,36 @@ class DashboardService:
 
     # ── 조회 ──
 
+    def _parse_bool_env(self, name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on", "y"}
+
+    def _read_emergency_stop_state(self) -> bool:
+        """Read project-level emergency stop state file.
+
+        File format:
+        - line1: active|inactive
+        - line2: reason
+        - line3: timestamp
+        """
+        try:
+            state_file = Path(__file__).resolve().parents[2] / ".emergency_stop"
+            if not state_file.is_file():
+                return False
+            first_line = state_file.read_text(encoding="utf-8", errors="ignore").splitlines()[:1]
+            if not first_line:
+                return False
+            return first_line[0].strip().lower() == "active"
+        except Exception:
+            # Dashboard should fail-safe to non-crashing behavior.
+            return False
+
     def get_system_status(self) -> SystemStatusView:
         return SystemStatusView(
-            live_trading_enabled=False,
-            emergency_stop=False,
+            live_trading_enabled=self._parse_bool_env("LIVE_TRADING_ENABLED", default=False),
+            emergency_stop=self._read_emergency_stop_state(),
             modules_loaded=True,
             total_tests=769,
         )
@@ -133,6 +251,16 @@ class DashboardService:
         # 실소스가 없으면 UNKNOWN + 차단으로만 노출한다.
         if self._session_status_override is not None:
             return self._session_status_override
+
+        probe = self._probe_kis_price("005930")
+        if probe.get("data_available"):
+            return SessionStatusView(
+                session_state="UNKNOWN",
+                buy_allowed=False,
+                is_trading_day=True,
+                reason="session_status_feed_partial",
+                detail=f"KIS 현재가 수신됨(005930={probe.get('current_price', 0)}), 세션상태 판독 어댑터 미연결",
+            )
 
         return SessionStatusView(
             session_state="UNKNOWN",
@@ -146,6 +274,17 @@ class DashboardService:
         # 추정 금지: 시간/요일 기반 더미 BULL 판정 금지.
         if self._market_regime_override is not None:
             return self._market_regime_override
+
+        probe = self._probe_kis_price("005930")
+        if probe.get("data_available"):
+            return MarketRegimeView(
+                regime="UNKNOWN",
+                allow_new_buy=False,
+                total_score=0.0,
+                candidate_score_adjustment=0.0,
+                reason="market_regime_feed_partial",
+                factors=f"KIS 현재가 수신됨(005930={probe.get('current_price', 0)}), 시장국면 엔진 실데이터 연동 대기",
+            )
 
         return MarketRegimeView(
             regime="UNKNOWN",

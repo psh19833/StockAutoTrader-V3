@@ -1,6 +1,7 @@
 """Tests for Dashboard Foundation — models, service, routes"""
 from __future__ import annotations
 
+import json
 import pytest
 
 from dashboard.dashboard_models import (
@@ -185,3 +186,50 @@ class TestDashboardServiceReadOnlyStatus:
         regime = svc.get_market_regime()
         assert regime.regime == "UNKNOWN"
         assert regime.allow_new_buy is False
+
+
+class _DummyResponse:
+    def __init__(self, status: int, payload: dict):
+        self.status = status
+        self._payload = payload
+
+    def read(self):
+        return json.dumps(self._payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class TestDashboardServiceTokenCache:
+    def test_probe_kis_price_reuses_cached_token(self, monkeypatch):
+        svc = DashboardService()
+
+        monkeypatch.setenv("KIS_APP_KEY", "dummy_key")
+        monkeypatch.setenv("KIS_APP_SECRET", "dummy_secret")
+        monkeypatch.setenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
+        call_counts = {"token": 0, "price": 0}
+
+        def fake_urlopen(req, timeout=0):
+            url = req.full_url
+            if "/oauth2/tokenP" in url:
+                call_counts["token"] += 1
+                return _DummyResponse(200, {"access_token": "cached_token", "token_type": "Bearer", "expires_in": 3600})
+            if "/uapi/domestic-stock/v1/quotations/inquire-price" in url:
+                call_counts["price"] += 1
+                return _DummyResponse(200, {"output": {"stck_prpr": "72000"}})
+            return _DummyResponse(404, {"error": "not_found"})
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        r1 = svc._probe_kis_price("005930")
+        r2 = svc._probe_kis_price("005930")
+
+        assert r1.get("data_available") is True
+        assert r2.get("data_available") is True
+        assert call_counts["token"] == 1
+        assert call_counts["price"] == 2
