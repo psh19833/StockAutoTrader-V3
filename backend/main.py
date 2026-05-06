@@ -3,6 +3,8 @@
 Entry point for uvicorn: uvicorn main:app --host 127.0.0.1 --port 8000
 """
 import os
+import threading
+import time
 from pathlib import Path
 
 # Load .env from project root
@@ -43,6 +45,20 @@ except Exception:
     pass
 
 app = FastAPI(title="SAT3 Dashboard API", version="3.0.0")
+
+# Runtime scheduler loop state (read-only/dry-run dashboard refresh)
+_runtime_lock = threading.Lock()
+_runtime_thread = None
+_runtime_stop_event = threading.Event()
+_runtime_status: dict[str, object] = {
+    "running": False,
+    "mode": "dry-run",
+    "session": "REGULAR_MARKET",
+    "interval_sec": 10,
+    "last_tick_at": "",
+    "last_result": {},
+    "tick_count": 0,
+}
 
 # Startup log — add project root to path for tools import
 import sys as _sys
@@ -196,6 +212,69 @@ async def dashboard_logs(date: str = "", category: str = "system", max_lines: in
 async def log_dates():
     from dashboard.dashboard_routes import handle_get_log_dates
     return handle_get_log_dates()
+
+
+def _runtime_loop() -> None:
+    global _runtime_thread
+    while not _runtime_stop_event.is_set():
+        try:
+            with _runtime_lock:
+                mode = str(_runtime_status.get("mode", "dry-run"))
+                session = str(_runtime_status.get("session", "REGULAR_MARKET"))
+                interval_sec = int(_runtime_status.get("interval_sec", 10))
+            from dashboard.dashboard_routes import run_runtime_tick_and_sync
+            tick = run_runtime_tick_and_sync(mode=mode, session=session)
+            with _runtime_lock:
+                _runtime_status["last_result"] = tick
+                _runtime_status["tick_count"] = int(_runtime_status.get("tick_count", 0)) + 1
+                _runtime_status["last_tick_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception as e:
+            with _runtime_lock:
+                _runtime_status["last_result"] = {"error": f"{type(e).__name__}: {e}"}
+        _runtime_stop_event.wait(max(1, interval_sec))
+
+    with _runtime_lock:
+        _runtime_status["running"] = False
+    _runtime_thread = None
+
+
+@app.post("/api/runtime/tick")
+async def runtime_tick(mode: str = "dry-run", session: str = "REGULAR_MARKET"):
+    from dashboard.dashboard_routes import run_runtime_tick_and_sync
+    return run_runtime_tick_and_sync(mode=mode, session=session)
+
+
+@app.post("/api/runtime/start")
+async def runtime_start(mode: str = "dry-run", session: str = "REGULAR_MARKET", interval_sec: int = 10):
+    global _runtime_thread
+    with _runtime_lock:
+        if _runtime_status.get("running"):
+            return {"started": False, "reason": "already_running", "status": _runtime_status}
+
+        _runtime_stop_event.clear()
+        _runtime_status["running"] = True
+        _runtime_status["mode"] = mode
+        _runtime_status["session"] = session
+        _runtime_status["interval_sec"] = max(1, int(interval_sec))
+
+    _runtime_thread = threading.Thread(target=_runtime_loop, daemon=True)
+    _runtime_thread.start()
+    with _runtime_lock:
+        return {"started": True, "status": _runtime_status}
+
+
+@app.post("/api/runtime/stop")
+async def runtime_stop():
+    _runtime_stop_event.set()
+    with _runtime_lock:
+        _runtime_status["running"] = False
+    return {"stopped": True, "status": _runtime_status}
+
+
+@app.get("/api/runtime/status")
+async def runtime_status():
+    with _runtime_lock:
+        return dict(_runtime_status)
 
 
 @app.get("/health")

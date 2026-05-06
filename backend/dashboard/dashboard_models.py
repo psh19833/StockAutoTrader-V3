@@ -247,3 +247,4 @@ class DashboardSummary:
     risk_decisions: list[RiskDecisionView]
     data_sources: dict[str, str]
     ws_status: WebSocketStatusView | None = None
+    data_router: dict[str, Any] | None = None

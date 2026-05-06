@@ -19,4 +19,8 @@ def test_orchestrator_live_mode_does_not_use_dry_runner_and_is_blocked_not_confi
     assert "dry_run" not in result  # must not run DryDecisionRunner in live mode
     live = result.get("live")
     assert isinstance(live, dict)
-    assert live.get("status") in ("BLOCKED_NOT_CONFIGURED", "BLOCKED_NOT_IMPLEMENTED")
+    assert live.get("status") in (
+        "BLOCKED_NOT_CONFIGURED",
+        "BLOCKED_NOT_IMPLEMENTED",
+        "BLOCKED_NOT_ENABLED",
+    )

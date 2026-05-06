@@ -27,6 +27,8 @@ def build_dashboard_summary(
     # 실제 세션/시장 평가 가져오기 (근거 포함)
     session_view = _service.get_session_status()
     regime_view = _service.get_market_regime()
+    ws_status = _service.get_ws_status()
+    data_router = _service.get_data_router_status()
 
     return DashboardSummary(
         system=SystemStatusView(
@@ -60,4 +62,6 @@ def build_dashboard_summary(
             "portfolio": "KIS_API",
             "fills": "KIS_API",
         },
+        ws_status=ws_status,
+        data_router=data_router,
     )

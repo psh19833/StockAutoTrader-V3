@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import os
 
 from runtime.scheduler import Scheduler, SessionState
 from runtime.data_router import MarketDataRouter
@@ -18,7 +19,8 @@ class Orchestrator:
         self._cache = MarketCache()
         self._router = MarketDataRouter(self._cache)
         self._dry_runner = DryDecisionRunner(self._router)
-        self._live_runner = LiveTradingRunner(configured=False)
+        live_runner_enabled = os.getenv("SAT3_ENABLE_LIVE_RUNNER", "true").lower() == "true"
+        self._live_runner = LiveTradingRunner(configured=live_runner_enabled)
         self._state = "stopped"
         self._last_tick: Optional[str] = None
 
@@ -70,6 +72,11 @@ class Orchestrator:
                         "risk_decisions": len(dry.get("risk_decisions", []) or []),
                         "order_intents": len(dry.get("order_intents", []) or []),
                     },
+                    "candidates": dry.get("candidates", []) or [],
+                    "scores": dry.get("scores", []) or [],
+                    "signals": dry.get("signals", []) or [],
+                    "risk_decisions": dry.get("risk_decisions", []) or [],
+                    "order_intents": dry.get("order_intents", []) or [],
                 }
             elif mode == "live":
                 live = self._live_runner.run_tick(session=session.value)
