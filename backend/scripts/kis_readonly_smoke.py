@@ -98,7 +98,17 @@ def run_smoke_with_transport(
     except Exception as e:
         results["price"] = f"FAIL: {_safe_error(e)}"
 
-    # 7. 종목정보 (선택)
+    # 7. 계좌/잔고 조회 (readonly)
+    try:
+        from kis.account_api import AccountApi
+        account_api = AccountApi(client=client)
+        balance = account_api.get_balance()
+        positions = balance.get("positions", []) if isinstance(balance, dict) else []
+        results["balance"] = f"OK (positions={len(positions)})"
+    except Exception as e:
+        results["balance"] = f"FAIL: {_safe_error(e)}"
+
+    # 8. 종목정보 (선택)
     try:
         info = facade.get_stock_info(symbol)
         results["stock_info"] = f"{info.get('market', '?')}/{info.get('product_type', '?')}"
@@ -116,6 +126,39 @@ def _safe_error(e: Exception) -> str:
         if word.lower() in msg.lower():
             return type(e).__name__
     return f"{type(e).__name__}: {msg[:80]}"
+
+
+def _save_snapshot(result: dict[str, Any]) -> None:
+    """Save sanitized readonly smoke snapshot for dashboard consumption."""
+    try:
+        import json
+        from pathlib import Path
+
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        price_text = str(result.get("price", ""))
+        sample_price = 0
+        if price_text.startswith("OK (") and " won" in price_text:
+            raw = price_text.split("OK (", 1)[1].split(" won", 1)[0]
+            sample_price = int(raw.replace(",", "").strip() or 0)
+
+        snapshot = {
+            "timestamp": result.get("timestamp", ""),
+            "symbol": result.get("symbol", "005930"),
+            "token": result.get("token", ""),
+            "price": result.get("price", ""),
+            "balance": result.get("balance", ""),
+            "success": str(result.get("token", "")).startswith("OK") and str(result.get("price", "")).startswith("OK"),
+            "sample_price": sample_price,
+            "mode": "readonly_rest_smoke",
+        }
+        (data_dir / "kis_readonly_smoke_snapshot.json").write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        # snapshot persistence failure must not fail smoke execution
+        pass
 
 
 def _debug_response_keys(transport, base_url: str, symbol: str) -> None:
@@ -199,6 +242,8 @@ def main():
 
     for k, v in result.items():
         print(f"  {k}: {v}")
+
+    _save_snapshot(result)
 
     if result.get("error"):
         sys.exit(1)

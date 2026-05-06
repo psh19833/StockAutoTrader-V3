@@ -40,6 +40,27 @@ class DashboardService:
     def _has_kis_credentials(self) -> bool:
         return bool(os.getenv("KIS_APP_KEY", "") and os.getenv("KIS_APP_SECRET", ""))
 
+    def _data_dir(self) -> Path:
+        d = Path(__file__).resolve().parents[2] / "data"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _load_json_file(self, path: Path) -> dict[str, Any] | None:
+        try:
+            import json
+            if not path.is_file():
+                return None
+            raw = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            return raw if isinstance(raw, dict) else None
+        except Exception:
+            return None
+
+    def _load_rest_smoke_snapshot(self) -> dict[str, Any] | None:
+        return self._load_json_file(self._data_dir() / "kis_readonly_smoke_snapshot.json")
+
+    def _load_ws_smoke_snapshot(self) -> dict[str, Any] | None:
+        return self._load_json_file(self._data_dir() / "kis_ws_readonly_smoke_snapshot.json")
+
     def _get_token_provider(self):
         if self._token_provider is not None:
             return self._token_provider
@@ -104,11 +125,29 @@ class DashboardService:
 
     def get_data_router_status(self) -> dict[str, Any]:
         ws = self.get_ws_status()
-        probe = self._probe_kis_price("005930")
+        smoke = self._load_rest_smoke_snapshot() or {}
+        smoke_ok = bool(smoke.get("success", False))
+        smoke_price_ok = str(smoke.get("price", "")).startswith("OK")
+
+        probe = self._probe_kis_price("005930") if not (smoke_ok and smoke_price_ok) else {
+            "data_available": True,
+            "symbol": str(smoke.get("symbol", "005930")),
+            "current_price": int(smoke.get("sample_price", 0) or 0),
+            "reason": "rest_smoke_snapshot",
+        }
+        rest_available = bool(probe.get("data_available", False)) or (smoke_ok and smoke_price_ok)
+        rest_reason = str(probe.get("reason", "rest_unavailable"))
+
+        stale_warnings: list[str] = []
+        if not rest_available:
+            stale_warnings.append(rest_reason)
+        elif smoke_ok:
+            stale_warnings.append("rest_verified_by_readonly_smoke")
+
         return {
             "ws_connected": ws.get("connection_state") == "CONNECTED",
-            "rest_available": bool(probe.get("data_available", False)),
-            "stale_warnings": [] if probe.get("data_available", False) else [str(probe.get("reason", "rest_unavailable"))],
+            "rest_available": rest_available,
+            "stale_warnings": stale_warnings,
             "source": "KIS_API_WS" if ws.get("connection_state") == "CONNECTED" else "KIS_API_REST",
             "sample_symbol": probe.get("symbol", "005930"),
             "sample_price": probe.get("current_price", 0),
@@ -168,6 +207,14 @@ class DashboardService:
         If provider is missing, return safe status + reason.
         """
         if self._ws_status_provider is None:
+            ws_smoke = self._load_ws_smoke_snapshot() or {}
+            if ws_smoke.get("success") is True:
+                return {
+                    "connection_state": str(ws_smoke.get("connection_state", "DISCONNECTED")),
+                    "subscribed_channels": list(ws_smoke.get("channels", [])),
+                    "data_source": "readonly_ws_smoke",
+                    "status_reason": "ws_readonly_smoke_verified",
+                }
             return {
                 "connection_state": "UNKNOWN",
                 "subscribed_channels": [],
@@ -252,6 +299,7 @@ class DashboardService:
         if self._session_status_override is not None:
             return self._session_status_override
 
+        router = self.get_data_router_status()
         probe = self._probe_kis_price("005930")
         if probe.get("data_available"):
             return SessionStatusView(
@@ -267,7 +315,7 @@ class DashboardService:
             buy_allowed=False,
             is_trading_day=False,
             reason="session_source_unavailable",
-            detail="시장세션 데이터 소스 미연결 — 신규매수 차단(조회전용)",
+            detail=f"시장세션 데이터 소스 미연결 — 신규매수 차단(조회전용), data_router.rest_available={router.get('rest_available')} warnings={router.get('stale_warnings')}",
         )
 
     def get_market_regime(self) -> MarketRegimeView:
@@ -275,6 +323,7 @@ class DashboardService:
         if self._market_regime_override is not None:
             return self._market_regime_override
 
+        router = self.get_data_router_status()
         probe = self._probe_kis_price("005930")
         if probe.get("data_available"):
             return MarketRegimeView(
@@ -292,7 +341,7 @@ class DashboardService:
             total_score=0.0,
             candidate_score_adjustment=0.0,
             reason="market_regime_source_unavailable",
-            factors="실시간 시장 데이터 소스 미연결 — 점수 산출 보류",
+            factors=f"실시간 시장 데이터 소스 미연결 — 점수 산출 보류, data_router.rest_available={router.get('rest_available')} warnings={router.get('stale_warnings')}",
         )
 
     def get_candidates(self) -> list[ScannerCandidateView]:

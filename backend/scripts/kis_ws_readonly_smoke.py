@@ -152,6 +152,32 @@ def _print_parsed_summary(result) -> None:
     print(f"  Parsed: {json.dumps(summary, default=str, indent=4)}")
 
 
+def _save_ws_snapshot(*, success: bool, symbol: str, channels: list[str], status) -> None:
+    """Persist sanitized WS readonly smoke snapshot for dashboard."""
+    try:
+        from pathlib import Path
+        from datetime import datetime, timezone
+
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        snapshot = {
+            "success": bool(success),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "symbol": symbol,
+            "channels": list(channels),
+            "connection_state": getattr(status, "connection_state", "UNKNOWN"),
+            "reconnect_count": int(getattr(status, "reconnect_count", 0) or 0),
+            "data_quality_warnings": list(getattr(status, "data_quality_warnings", []) or []),
+            "mode": "readonly_ws_smoke",
+        }
+        (data_dir / "kis_ws_readonly_smoke_snapshot.json").write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -286,6 +312,7 @@ def main():
     print(f"  subscribed_channels: {status.subscribed_channels}")
     print(f"  reconnect_count: {status.reconnect_count}")
     print(f"  data_quality_warnings: {status.data_quality_warnings}")
+    _save_ws_snapshot(success=True, symbol=args.symbol, channels=channel_names, status=status)
     print(f"\n[DONE] Smoke test completed successfully.")
 
 

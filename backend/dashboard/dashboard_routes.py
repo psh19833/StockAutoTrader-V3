@@ -117,7 +117,24 @@ def handle_get_summary() -> dict[str, Any]:
         orders=svc.get_orders(),
         fills=svc.get_fills(),
     )
-    return _to_dict(summary)
+    payload = _to_dict(summary)
+
+    # Include runtime state in summary for dashboard observability.
+    try:
+        import main as _main
+        payload["runtime_status"] = dict(_main._runtime_status)  # read-only snapshot
+    except Exception:
+        payload["runtime_status"] = {
+            "running": False,
+            "reason": "runtime_status_unavailable",
+        }
+
+    payload["runtime_live_mode_policy"] = {
+        "runtime_api_mode": "dry-run-only",
+        "live_mode_request_status": "RUNTIME_LIVE_MODE_DISABLED",
+        "reason": "Runtime API is dry-run only",
+    }
+    return payload
 
 
 def handle_get_system() -> dict[str, Any]:
