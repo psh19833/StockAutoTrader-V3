@@ -87,8 +87,9 @@ class TestSmokeScript:
 class TestSmokeWithStubTransport:
     """StubTransport 기반 smoke flow 검증"""
 
-    def test_smoke_with_stub(self):
+    def test_smoke_with_stub(self, monkeypatch):
         """StubTransport로 smoke 테스트 실행 (실제 호출 없음)"""
+        monkeypatch.setenv("LIVE_TRADING_ENABLED", "false")
         from kis.transport import StubTransport
         from scripts.kis_readonly_smoke import run_smoke_with_transport
 
@@ -118,8 +119,9 @@ class TestSmokeWithStubTransport:
         assert "holidays" in result
         assert "price" in result
 
-    def test_smoke_no_secret_in_output(self):
+    def test_smoke_no_secret_in_output(self, monkeypatch):
         """실행 결과에 secret 원문 없음"""
+        monkeypatch.setenv("LIVE_TRADING_ENABLED", "false")
         from kis.transport import StubTransport
         from scripts.kis_readonly_smoke import run_smoke_with_transport
 

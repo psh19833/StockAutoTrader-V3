@@ -3,11 +3,34 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
 import main
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _reset_runtime_state() -> None:
+    with main._runtime_lock:
+        main._runtime_status["running"] = False
+        main._runtime_status["mode"] = "dry-run"
+        main._runtime_status["session"] = "REGULAR_MARKET"
+        main._runtime_status["interval_sec"] = 10
+        main._runtime_status["last_tick_at"] = ""
+        main._runtime_status["last_result"] = {}
+        main._runtime_status["tick_count"] = 0
+        main._runtime_status["live_start_block_reasons"] = []
+        main._runtime_status["last_order_status"] = ""
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runtime_state():
+    _run(main.runtime_stop())
+    _reset_runtime_state()
+    yield
+    _run(main.runtime_stop())
+    _reset_runtime_state()
 
 
 def test_runtime_tick_updates_dashboard_read_models():
@@ -20,7 +43,23 @@ def test_runtime_tick_updates_dashboard_read_models():
     assert counts.get("signals", 0) >= 1
 
 
-def test_runtime_tick_rejects_live_mode_when_preconditions_fail():
+def test_runtime_tick_rejects_live_mode_when_preconditions_fail(monkeypatch):
+    forced_checks = {
+        "LIVE_TRADING_ENABLED_TRUE": True,
+        "CONFIRM_ENV_SET": True,
+        "EMERGENCY_STOP_INACTIVE": True,
+        "KIS_REST_AVAILABLE": True,
+        "KIS_WS_AVAILABLE": True,
+        "SESSION_REGULAR_MARKET": False,
+        "MARKET_REGIME_KNOWN": True,
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
+        "RISK_LIMITS_LOADED": True,
+        "TELEGRAM_STATUS_AVAILABLE": True,
+        "AUDIT_LOGGING_ACTIVE": True,
+        "FILL_RECONCILIATION_ACTIVE": True,
+    }
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+
     result = _run(main.runtime_tick(mode="live", session="REGULAR_MARKET"))
     assert result.get("mode") == "live"
     assert result.get("status") == "RUNTIME_LIVE_MODE_BLOCKED"
@@ -29,7 +68,23 @@ def test_runtime_tick_rejects_live_mode_when_preconditions_fail():
     assert isinstance(result.get("block_reasons"), list)
 
 
-def test_runtime_start_rejects_live_mode_when_preconditions_fail():
+def test_runtime_start_rejects_live_mode_when_preconditions_fail(monkeypatch):
+    forced_checks = {
+        "LIVE_TRADING_ENABLED_TRUE": True,
+        "CONFIRM_ENV_SET": True,
+        "EMERGENCY_STOP_INACTIVE": True,
+        "KIS_REST_AVAILABLE": True,
+        "KIS_WS_AVAILABLE": True,
+        "SESSION_REGULAR_MARKET": False,
+        "MARKET_REGIME_KNOWN": True,
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
+        "RISK_LIMITS_LOADED": True,
+        "TELEGRAM_STATUS_AVAILABLE": True,
+        "AUDIT_LOGGING_ACTIVE": True,
+        "FILL_RECONCILIATION_ACTIVE": True,
+    }
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+
     started = _run(main.runtime_start(mode="live", session="REGULAR_MARKET", interval_sec=1))
     assert started.get("started") is False
     assert started.get("reason") == "LIVE_START_PRECONDITION_FAILED"
