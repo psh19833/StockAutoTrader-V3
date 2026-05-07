@@ -115,11 +115,27 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
 
     svc = get_service()
     summary = handle_get_summary()
+
+    # Reuse values already computed during summary build to avoid duplicate KIS probes
+    # in the same precheck cycle (token-rate sensitive path).
     system = svc.get_system_status()
-    session = svc.get_session_status()
-    regime = svc.get_market_regime()
-    router = svc.get_data_router_status()
-    ws = svc.get_ws_status()
+    session = summary.get("session")
+    regime = summary.get("market_regime")
+    router = summary.get("data_router") or {}
+    ws = summary.get("ws_status") or {}
+
+    session_state = getattr(session, "session_state", "UNKNOWN") if session is not None else "UNKNOWN"
+    session_reason = getattr(session, "reason", None) if session is not None else None
+    session_source = None
+    if isinstance(session_reason, str) and "=" in session_reason:
+        session_source = session_reason.split("=", 1)[1]
+
+    regime_name = getattr(regime, "regime", "UNKNOWN") if regime is not None else "UNKNOWN"
+    regime_reason = getattr(regime, "reason", None) if regime is not None else None
+    regime_source = None
+    if isinstance(regime_reason, str) and "=" in regime_reason:
+        regime_source = regime_reason.split("=", 1)[1]
+
     risk_loaded, risk_missing = _risk_limits_loaded()
 
     checks = {
@@ -128,8 +144,8 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "EMERGENCY_STOP_INACTIVE": not _read_emergency_stop_active(),
         "KIS_REST_AVAILABLE": bool(router.get("rest_available", False)),
         "KIS_WS_AVAILABLE": ws.get("connection_state") == "CONNECTED" or ws.get("status_reason") == "ws_readonly_smoke_verified",
-        "SESSION_REGULAR_MARKET": session.session_state == "REGULAR_MARKET",
-        "MARKET_REGIME_KNOWN": regime.regime != "UNKNOWN",
+        "SESSION_REGULAR_MARKET": session_state == "REGULAR_MARKET",
+        "MARKET_REGIME_KNOWN": regime_name != "UNKNOWN",
         "PORTFOLIO_SOURCE_KIS_REST_FRESH": (not bool(summary.get("portfolio_stale", False))) and str(summary.get("portfolio_source_of_truth", "KIS_REST")) == "KIS_REST",
         "RISK_LIMITS_LOADED": risk_loaded,
         "TELEGRAM_STATUS_AVAILABLE": bool(os.getenv("TELEGRAM_BOT_TOKEN", "") and os.getenv("TELEGRAM_CHAT_ID", "")),
@@ -137,11 +153,16 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "FILL_RECONCILIATION_ACTIVE": True,
     }
     context = {
-        "session": session.session_state,
-        "market_regime": regime.regime,
+        "session": session_state,
+        "session_reason": session_reason,
+        "session_source": session_source,
+        "market_regime": regime_name,
+        "market_regime_reason": regime_reason,
+        "market_regime_source": regime_source,
         "rest_available": bool(router.get("rest_available", False)),
         "ws_state": ws.get("connection_state", "UNKNOWN"),
         "risk_limits_missing": risk_missing,
+        "portfolio_stale": summary.get("portfolio_stale"),
     }
     return checks, context
 
