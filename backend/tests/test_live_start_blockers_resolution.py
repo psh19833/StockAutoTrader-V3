@@ -194,3 +194,102 @@ def test_live_confirm_gate_matrix(monkeypatch):
     checks, _ = main._build_live_start_checks()
     assert checks["LIVE_TRADING_ENABLED_TRUE"] is True
     assert checks["CONFIRM_ENV_SET"] is True
+
+
+def test_rest_snapshot_freshness_hard_check(monkeypatch):
+    svc = DashboardService()
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
+
+    monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {
+        "success": True,
+        "price": "OK",
+        "timestamp": _fresh_ts(),
+        "sample_price": 70000,
+    })
+    router_fresh = svc.get_data_router_status()
+    assert router_fresh["rest_snapshot_fresh"] is True
+    assert router_fresh["rest_available"] is True
+
+    monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {
+        "success": True,
+        "price": "OK",
+        "timestamp": _stale_ts(),
+        "sample_price": 70000,
+    })
+    router_stale = svc.get_data_router_status()
+    assert router_stale["rest_snapshot_fresh"] is False
+    assert router_stale["rest_available"] is False
+
+
+def test_ws_snapshot_freshness_hard_check(monkeypatch):
+    svc = DashboardService()
+    monkeypatch.setattr(svc, "_load_ws_smoke_snapshot", lambda: {
+        "success": True,
+        "timestamp": _fresh_ts(),
+        "connection_state": "CONNECTED",
+        "channels": ["H0STCNT0"],
+    })
+    ws_fresh = svc.get_ws_status()
+    assert ws_fresh["snapshot_fresh"] is True
+    assert ws_fresh["status_reason"] == "ws_readonly_smoke_verified"
+
+    monkeypatch.setattr(svc, "_load_ws_smoke_snapshot", lambda: {
+        "success": True,
+        "timestamp": _stale_ts(),
+        "connection_state": "CONNECTED",
+        "channels": ["H0STCNT0"],
+    })
+    ws_stale = svc.get_ws_status()
+    assert ws_stale["snapshot_fresh"] is False
+    assert ws_stale["status_reason"] == "ws_readonly_smoke_stale"
+
+
+def test_invalid_or_missing_snapshot_timestamp_treated_as_stale(monkeypatch):
+    svc = DashboardService()
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
+
+    monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": True, "price": "OK", "timestamp": "invalid-ts"})
+    rest_invalid = svc.get_data_router_status()
+    assert rest_invalid["rest_snapshot_fresh"] is False
+
+    monkeypatch.setattr(svc, "_load_ws_smoke_snapshot", lambda: {"success": True})
+    ws_missing_ts = svc.get_ws_status()
+    assert ws_missing_ts["snapshot_fresh"] is False
+
+
+def test_live_readiness_requires_fresh_rest_and_ws_evidence(monkeypatch):
+    import dashboard.dashboard_routes as routes
+
+    class _DummyService:
+        def get_system_status(self):
+            class _S:
+                live_trading_enabled = True
+            return _S()
+
+    monkeypatch.setattr(routes, "get_service", lambda: _DummyService())
+    monkeypatch.setattr(routes, "handle_get_summary", lambda include_live_auto_ready=False: {
+        "session": type("Session", (), {"session_state": "REGULAR_MARKET", "reason": "session_source=KST_TIME_WITH_REST_VERIFIED"})(),
+        "market_regime": type("Regime", (), {"regime": "NEUTRAL", "reason": "market_regime_source=REST_SMOKE_SNAPSHOT"})(),
+        "data_router": {"rest_available": True, "rest_snapshot_fresh": False},
+        "ws_status": {"connection_state": "UNKNOWN", "snapshot_fresh": False, "status_reason": "ws_readonly_smoke_stale"},
+        "portfolio_stale": False,
+        "portfolio_source_of_truth": "KIS_REST",
+    })
+
+    monkeypatch.setenv("SAT3_CONFIRM_LIVE_AUTO_TRADING", "CONFIRM_LIVE_AUTO_TRADING")
+    monkeypatch.setenv("SAT3_MAX_DAILY_LOSS_KRW", "100000")
+    monkeypatch.setenv("SAT3_MAX_POSITION_COUNT", "3")
+    monkeypatch.setenv("SAT3_MAX_ORDER_AMOUNT_KRW", "50000")
+    monkeypatch.setenv("SAT3_MAX_AMOUNT_PER_SYMBOL_KRW", "100000")
+    monkeypatch.setenv("SAT3_MAX_PENDING_ORDERS", "1")
+    monkeypatch.setenv("SAT3_DUPLICATE_ORDER_GUARD_ENABLED", "true")
+    monkeypatch.setenv("SAT3_TELEGRAM_EXPLICIT_TARGET", "telegram:dummy")
+    monkeypatch.setenv("SAT3_TELEGRAM_EXPLICIT_TARGET_OK", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")
+
+    checks, _ = main._build_live_start_checks()
+    assert checks["KIS_REST_AVAILABLE"] is True
+    assert checks["KIS_REST_FRESH"] is False
+    assert checks["KIS_WS_AVAILABLE"] is False
+    assert checks["KIS_WS_FRESH"] is False

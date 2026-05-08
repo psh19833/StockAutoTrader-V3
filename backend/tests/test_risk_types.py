@@ -27,6 +27,8 @@ class TestRiskRejectReason:
             "SYMBOL_EXPOSURE_BLOCKED", "POSITION_LIMIT_BLOCKED",
             "STALE_DATA_BLOCKED", "DATA_QUALITY_BLOCKED",
             "EMERGENCY_STOP_BLOCKED", "LIVE_TRADING_DISABLED",
+            "SELL_BLOCKED_NO_POSITION", "BUY_BLOCKED_NON_POSITIVE_AMOUNT",
+            "BUY_BLOCKED_LOW_CONFIDENCE", "BUY_BLOCKED_MISSING_QUANT_SOURCE",
             "UNKNOWN",
         }
         actual = {r.value for r in RiskRejectReason}

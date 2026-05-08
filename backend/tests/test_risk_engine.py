@@ -96,21 +96,21 @@ class TestEvaluateRisk:
     def test_all_checks_pass(self):
         signal = _make_signal()
         context = _make_context()
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is True
         assert result.status == RiskDecisionStatus.APPROVED
 
     def test_live_trading_disabled_blocks(self):
         signal = _make_signal()
         context = _make_context(live_trading=False)
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.LIVE_TRADING_DISABLED.value
 
     def test_emergency_stop_blocks(self):
         signal = _make_signal()
         context = _make_context(emergency_stop=True)
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.EMERGENCY_STOP_BLOCKED.value
 
@@ -119,7 +119,7 @@ class TestEvaluateRisk:
         context = _make_context(
             regime=_make_regime(MarketRegime.UNKNOWN, allow_new_buy=False)
         )
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.MARKET_REGIME_BLOCKED.value
 
@@ -128,7 +128,7 @@ class TestEvaluateRisk:
         context = _make_context(
             regime=_make_regime(MarketRegime.BEAR, allow_new_buy=False)
         )
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
 
     def test_session_unknown_blocks(self):
@@ -136,7 +136,7 @@ class TestEvaluateRisk:
         context = _make_context(
             session_state=TradingSessionState.SESSION_STATE_UNKNOWN
         )
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.SESSION_BLOCKED.value
 
@@ -145,7 +145,7 @@ class TestEvaluateRisk:
         context = _make_context(
             session_state=TradingSessionState.CLOSED_HOLIDAY
         )
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
 
     def test_late_market_blocks_new_buy(self):
@@ -153,27 +153,61 @@ class TestEvaluateRisk:
         context = _make_context(
             session_state=TradingSessionState.LATE_MARKET
         )
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
 
     def test_duplicate_pending_order_blocks(self):
         signal = _make_signal(symbol="005930")
         context = _make_context(pending_orders=frozenset({"005930"}))
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.DUPLICATE_ORDER_BLOCKED.value
 
     def test_duplicate_position_blocks(self):
         signal = _make_signal(symbol="005930")
         context = _make_context(current_positions=frozenset({"005930"}))
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.SYMBOL_EXPOSURE_BLOCKED.value
+
+    def test_sell_without_position_blocks(self):
+        signal = _make_signal(side="SELL", strategy_type=StrategyType.FAST_EXIT, symbol="005930")
+        context = _make_context(current_positions=frozenset())
+        result = evaluate_risk(signal, context, requested_amount=100_000)
+        assert result.allowed is False
+        assert result.reason_code == RiskRejectReason.SELL_BLOCKED_NO_POSITION.value
+
+    def test_sell_with_position_allows_when_other_checks_ok(self):
+        signal = _make_signal(side="SELL", strategy_type=StrategyType.FAST_EXIT, symbol="005930")
+        context = _make_context(current_positions=frozenset({"005930"}))
+        result = evaluate_risk(signal, context, requested_amount=100_000)
+        assert result.allowed is True
+
+    def test_buy_non_positive_amount_blocks(self):
+        signal = _make_signal(side="BUY")
+        context = _make_context()
+        result = evaluate_risk(signal, context, requested_amount=0)
+        assert result.allowed is False
+        assert result.reason_code == RiskRejectReason.BUY_BLOCKED_NON_POSITIVE_AMOUNT.value
+
+    def test_buy_low_confidence_blocks(self):
+        signal = _make_signal(side="BUY", confidence=0.0)
+        context = _make_context()
+        result = evaluate_risk(signal, context, requested_amount=100_000)
+        assert result.allowed is False
+        assert result.reason_code == RiskRejectReason.BUY_BLOCKED_LOW_CONFIDENCE.value
+
+    def test_buy_missing_quant_source_blocks(self):
+        signal = _make_signal(side="BUY", source_quant_id="")
+        context = _make_context()
+        result = evaluate_risk(signal, context, requested_amount=100_000)
+        assert result.allowed is False
+        assert result.reason_code == RiskRejectReason.BUY_BLOCKED_MISSING_QUANT_SOURCE.value
 
     def test_daily_loss_limit_exceeded(self):
         signal = _make_signal()
         context = _make_context(daily_loss=-1_500_000, daily_loss_limit=1_000_000)
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is False
         assert result.reason_code == RiskRejectReason.DAILY_LOSS_LIMIT_BLOCKED.value
 
@@ -181,41 +215,41 @@ class TestEvaluateRisk:
         """SELL 청산은 세션 체크에서 더 관대"""
         signal = _make_signal(side="SELL",
                               strategy_type=StrategyType.FAST_EXIT)
-        context = _make_context()
-        result = evaluate_risk(signal, context)
+        context = _make_context(current_positions=frozenset({"005930"}))
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.allowed is True
 
     def test_result_includes_checked_items(self):
         signal = _make_signal()
         context = _make_context()
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert len(result.checked_items) > 0
         assert "live_trading_enabled" in result.checked_items
 
     def test_rejected_includes_failed_items(self):
         signal = _make_signal()
         context = _make_context(live_trading=False)
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert len(result.failed_items) > 0
         assert "live_trading_enabled" in result.failed_items
 
     def test_risk_decision_includes_session_state(self):
         signal = _make_signal()
         context = _make_context(session_state=TradingSessionState.REGULAR_MARKET)
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.session_state == TradingSessionState.REGULAR_MARKET.value
 
     def test_risk_decision_includes_market_regime(self):
         signal = _make_signal(market_regime="BULL")
         context = _make_context()
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         assert result.market_regime == "BULL"
 
     def test_no_order_execution(self):
         """RiskDecision은 실제 주문을 만들지 않는다"""
         signal = _make_signal()
         context = _make_context()
-        result = evaluate_risk(signal, context)
+        result = evaluate_risk(signal, context, requested_amount=100_000)
         rd_dict = result.__dict__
         for field in ["execute_orders", "order_submitted", "broker",
                        "place_order"]:

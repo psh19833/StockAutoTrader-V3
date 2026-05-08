@@ -92,13 +92,38 @@ def check_duplicate_order(symbol: str, pending_orders: frozenset[str]) -> _Check
 
 
 def check_duplicate_position(symbol: str, positions: frozenset[str], side: str = "BUY") -> _CheckResult:
-    # SELL은 기존 포지션이 있어야 하므로 중복 검사 제외
     if side == "SELL":
         return _CheckResult(True, check_name="duplicate_position")
     if symbol in positions:
         return _CheckResult(False, RiskRejectReason.SYMBOL_EXPOSURE_BLOCKED,
                             "duplicate_position")
     return _CheckResult(True, check_name="duplicate_position")
+
+
+def check_sell_position_exists(symbol: str, positions: frozenset[str], side: str = "BUY") -> _CheckResult:
+    if side != "SELL":
+        return _CheckResult(True, check_name="sell_position_exists")
+    if symbol not in positions:
+        return _CheckResult(False, RiskRejectReason.SELL_BLOCKED_NO_POSITION,
+                            "sell_position_exists")
+    return _CheckResult(True, check_name="sell_position_exists")
+
+
+def check_buy_signal_quality(signal: StrategySignal, requested_amount: int, limits: RiskLimits) -> _CheckResult:
+    if signal.side != "BUY":
+        return _CheckResult(True, check_name="buy_signal_quality")
+    if requested_amount <= 0:
+        return _CheckResult(False, RiskRejectReason.BUY_BLOCKED_NON_POSITIVE_AMOUNT,
+                            "buy_signal_quality")
+    if not str(signal.source_quant_id or "").strip():
+        return _CheckResult(False, RiskRejectReason.BUY_BLOCKED_MISSING_QUANT_SOURCE,
+                            "buy_signal_quality")
+    confidence = float(signal.confidence or 0.0)
+    confidence_score = confidence * 100.0
+    if confidence <= 0.0 or confidence_score < float(limits.min_candidate_score_for_buy):
+        return _CheckResult(False, RiskRejectReason.BUY_BLOCKED_LOW_CONFIDENCE,
+                            "buy_signal_quality")
+    return _CheckResult(True, check_name="buy_signal_quality")
 
 
 def check_daily_loss_limit(pnl: int, limit: int) -> _CheckResult:
@@ -202,7 +227,9 @@ def evaluate_risk(
         ),
         check_duplicate_order(signal.symbol, context.pending_orders),
         check_duplicate_position(signal.symbol, context.current_positions, signal.side),
+        check_sell_position_exists(signal.symbol, context.current_positions, signal.side),
         check_data_quality_warnings(context.data_quality_warnings),
+        check_buy_signal_quality(signal, requested_amount, limits),
         check_amount_limit(requested_amount, limits, signal.side),
         check_position_limit(
             len(context.current_positions), limits, signal.side

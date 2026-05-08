@@ -244,25 +244,31 @@ class DashboardService:
         smoke = self._load_rest_smoke_snapshot() or {}
         smoke_ok = bool(smoke.get("success", False))
         smoke_price_ok = str(smoke.get("price", "")).startswith("OK")
+        smoke_ts = str(smoke.get("timestamp", ""))
+        rest_snapshot_fresh = bool(smoke_ok and smoke_price_ok and self._is_snapshot_fresh(smoke_ts, max_age_sec=300))
 
-        probe = self._probe_kis_price("005930", allow_external=False) if not (smoke_ok and smoke_price_ok) else {
+        probe = self._probe_kis_price("005930", allow_external=False) if not rest_snapshot_fresh else {
             "data_available": True,
             "symbol": str(smoke.get("symbol", "005930")),
             "current_price": int(smoke.get("sample_price", 0) or 0),
             "reason": "rest_smoke_snapshot",
         }
-        rest_available = bool(probe.get("data_available", False)) or (smoke_ok and smoke_price_ok)
+        rest_available = bool(probe.get("data_available", False)) or rest_snapshot_fresh
         rest_reason = str(probe.get("reason", "rest_unavailable"))
 
         stale_warnings: list[str] = []
         if not rest_available:
             stale_warnings.append(rest_reason)
-        elif smoke_ok:
+        elif smoke_ok and not rest_snapshot_fresh:
+            stale_warnings.append("rest_smoke_snapshot_stale")
+        elif rest_snapshot_fresh:
             stale_warnings.append("rest_verified_by_readonly_smoke")
 
         return {
             "ws_connected": ws.get("connection_state") == "CONNECTED",
+            "ws_snapshot_fresh": bool(ws.get("snapshot_fresh", False)),
             "rest_available": rest_available,
+            "rest_snapshot_fresh": rest_snapshot_fresh,
             "stale_warnings": stale_warnings,
             "source": "KIS_API_WS" if ws.get("connection_state") == "CONNECTED" else "KIS_API_REST",
             "sample_symbol": probe.get("symbol", "005930"),
@@ -324,18 +330,30 @@ class DashboardService:
         """
         if self._ws_status_provider is None:
             ws_smoke = self._load_ws_smoke_snapshot() or {}
-            if ws_smoke.get("success") is True:
+            ws_ts = str(ws_smoke.get("timestamp", ""))
+            ws_fresh = bool(ws_smoke.get("success") is True and self._is_snapshot_fresh(ws_ts, max_age_sec=300))
+            if ws_fresh:
                 return {
                     "connection_state": str(ws_smoke.get("connection_state", "DISCONNECTED")),
                     "subscribed_channels": list(ws_smoke.get("channels", [])),
                     "data_source": "readonly_ws_smoke",
                     "status_reason": "ws_readonly_smoke_verified",
+                    "snapshot_fresh": True,
+                }
+            if ws_smoke.get("success") is True:
+                return {
+                    "connection_state": "UNKNOWN",
+                    "subscribed_channels": [],
+                    "data_source": "readonly_ws_smoke",
+                    "status_reason": "ws_readonly_smoke_stale",
+                    "snapshot_fresh": False,
                 }
             return {
                 "connection_state": "UNKNOWN",
                 "subscribed_channels": [],
                 "data_source": "default",
                 "status_reason": "ws_status_provider_not_configured",
+                "snapshot_fresh": False,
             }
         try:
             status = self._ws_status_provider.get_status()
@@ -345,9 +363,11 @@ class DashboardService:
                     "subscribed_channels": [],
                     "data_source": "provider",
                     "status_reason": "ws_status_provider_invalid_return",
+                    "snapshot_fresh": False,
                 }
             status.setdefault("subscribed_channels", [])
             status.setdefault("data_source", "provider")
+            status.setdefault("snapshot_fresh", status.get("connection_state") == "CONNECTED")
             return status
         except Exception as e:
             return {
@@ -355,6 +375,7 @@ class DashboardService:
                 "subscribed_channels": [],
                 "data_source": "provider",
                 "status_reason": f"provider_error:{type(e).__name__}",
+                "snapshot_fresh": False,
             }
 
     def _timeline_view_from_repo_row(self, row: dict[str, Any]) -> AuditTimelineView:
