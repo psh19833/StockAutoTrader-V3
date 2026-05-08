@@ -1,7 +1,7 @@
 """Orchestrator — coordinates Scheduler, DataRouter, DryDecisionRunner (N12)."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Callable
 import os
 
 from runtime.scheduler import Scheduler, SessionState
@@ -14,13 +14,14 @@ from runtime.live_trading_runner import LiveTradingRunner
 class Orchestrator:
     """SAT3 main orchestrator."""
 
-    def __init__(self):
+    def __init__(self, live_readiness_provider: Callable[[], tuple[bool, list[str]]] | None = None):
         self._scheduler = Scheduler()
         self._cache = MarketCache()
         self._router = MarketDataRouter(self._cache)
         self._dry_runner = DryDecisionRunner(self._router)
         live_runner_enabled = os.getenv("SAT3_ENABLE_LIVE_RUNNER", "false").lower() == "true"
         self._live_runner = LiveTradingRunner(configured=live_runner_enabled)
+        self._live_readiness_provider = live_readiness_provider
         self._state = "stopped"
         self._last_tick: Optional[str] = None
 
@@ -79,7 +80,19 @@ class Orchestrator:
                     "order_intents": dry.get("order_intents", []) or [],
                 }
             elif mode == "live":
-                live = self._live_runner.run_tick(session=session.value, ready=True)
+                ready = False
+                block_reasons = ["LIVE_READINESS_PROVIDER_NOT_CONFIGURED"]
+                if self._live_readiness_provider is not None:
+                    try:
+                        ready, block_reasons = self._live_readiness_provider()
+                    except Exception:
+                        ready = False
+                        block_reasons = ["LIVE_READINESS_PROVIDER_ERROR"]
+                live = self._live_runner.run_tick(
+                    session=session.value,
+                    ready=bool(ready),
+                    block_reasons=list(block_reasons or []),
+                )
                 result["actions"].append("live_tick")
                 result["live"] = live.to_dict()
             else:

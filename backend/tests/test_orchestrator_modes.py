@@ -24,3 +24,14 @@ def test_orchestrator_live_mode_does_not_use_dry_runner_and_is_blocked_not_confi
         "BLOCKED_NOT_IMPLEMENTED",
         "BLOCKED_NOT_ENABLED",
     )
+
+
+def test_orchestrator_live_mode_blocks_when_runner_enabled_but_readiness_false(monkeypatch):
+    monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+    orch = Orchestrator(live_readiness_provider=lambda: (False, ["SESSION_REGULAR_MARKET"]))
+    result = orch.tick(SessionState.REGULAR_MARKET, mode="live")
+
+    live = result.get("live") or {}
+    assert live.get("status") == "BLOCKED_PRECONDITION_FAILED"
+    assert live.get("ready") is False
+    assert "SESSION_REGULAR_MARKET" in (live.get("block_reasons") or [])

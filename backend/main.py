@@ -443,6 +443,23 @@ async def runtime_start_live(payload: dict | None = None):
             "required_confirm": "CONFIRM_LIVE_AUTO_TRADING",
         }
     # 운영 정책: CONFIRM 환경변수는 운영자가 수동으로 설정해야 하며 API가 자동 설정하지 않는다.
+    confirm_account = str(payload.get("confirm_account", "") or "").strip()
+    configured_account = str(os.getenv("KIS_ACCOUNT_NO", "") or "").strip()
+    if not confirm_account:
+        return {
+            "started": False,
+            "reason": "LIVE_CONFIRM_ACCOUNT_REQUIRED",
+        }
+    if not configured_account:
+        return {
+            "started": False,
+            "reason": "LIVE_CONFIG_ACCOUNT_MISSING",
+        }
+    if confirm_account != configured_account:
+        return {
+            "started": False,
+            "reason": "LIVE_CONFIRM_ACCOUNT_MISMATCH",
+        }
     interval_sec = int(payload.get("interval_sec", 10) or 10)
     return await runtime_start(mode="live", session="REGULAR_MARKET", interval_sec=interval_sec)
 

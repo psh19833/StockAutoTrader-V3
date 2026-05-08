@@ -54,3 +54,16 @@ def test_telegram_target_readiness_requires_explicit_target_verification(monkeyp
     valid2, ctx2 = main._get_telegram_target_readiness()
     assert valid2 is True
     assert ctx2["telegram_explicit_target"] == "telegram:SH P (dm)"
+
+
+def test_dashboard_summary_does_not_call_external_kis_or_telegram(monkeypatch):
+    import urllib.request
+
+    def _forbidden_urlopen(*args, **kwargs):
+        raise AssertionError("external network call must not happen in dashboard summary")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
+    payload = routes.handle_get_summary(include_live_auto_ready=False)
+    assert isinstance(payload, dict)
+    assert payload.get("session") is not None
+    assert payload.get("data_router") is not None

@@ -190,8 +190,8 @@ class TestDashboardServiceReadOnlyStatus:
         monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
 
         svc = DashboardService()
-        monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": False, "reason": "holiday_probe_error"})
-        monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
+        monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": False, "reason": "holiday_probe_error"})
+        monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
         monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": False, "timestamp": ""})
 
         session = svc.get_session_status()
@@ -234,7 +234,7 @@ class TestDashboardServiceTokenCache:
             url = req.full_url
             if "/oauth2/tokenP" in url:
                 call_counts["token"] += 1
-                return _DummyResponse(200, {"access_token": "cached_token", "token_type": "Bearer", "expires_in": 3600})
+                return _DummyResponse(200, {"access_token": "***", "token_type": "Bearer", "expires_in": 3600})
             if "/uapi/domestic-stock/v1/quotations/inquire-price" in url:
                 call_counts["price"] += 1
                 return _DummyResponse(200, {"output": {"stck_prpr": "72000"}})
@@ -243,10 +243,19 @@ class TestDashboardServiceTokenCache:
         import urllib.request
         monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-        r1 = svc._probe_kis_price("005930")
-        r2 = svc._probe_kis_price("005930")
+        r1 = svc._probe_kis_price("005930", allow_external=True)
+        r2 = svc._probe_kis_price("005930", allow_external=True)
 
         assert r1.get("data_available") is True
         assert r2.get("data_available") is True
         assert call_counts["token"] == 1
         assert call_counts["price"] == 2
+
+
+def test_dashboard_telegram_status_requires_explicit_opt_in(monkeypatch):
+    import dashboard.dashboard_routes as routes
+
+    monkeypatch.delenv("SAT3_DASHBOARD_TELEGRAM_PROBE", raising=False)
+    status = routes.handle_get_telegram_status()
+    assert status.get("connected") is False
+    assert status.get("error") == "external_probe_disabled"

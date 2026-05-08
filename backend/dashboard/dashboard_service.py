@@ -108,7 +108,9 @@ class DashboardService:
         )
         return self._token_provider
 
-    def _probe_kis_price(self, symbol: str = "005930") -> dict[str, Any]:
+    def _probe_kis_price(self, symbol: str = "005930", allow_external: bool = False) -> dict[str, Any]:
+        if not allow_external:
+            return {"data_available": False, "reason": "external_probe_disabled"}
         if not self._has_kis_credentials():
             return {"data_available": False, "reason": "missing_credentials"}
         try:
@@ -162,7 +164,9 @@ class DashboardService:
         except Exception as e:
             return {"data_available": False, "reason": f"probe_error:{type(e).__name__}"}
 
-    def _probe_kis_holiday_status(self) -> dict[str, Any]:
+    def _probe_kis_holiday_status(self, allow_external: bool = False) -> dict[str, Any]:
+        if not allow_external:
+            return {"data_available": False, "reason": "external_probe_disabled"}
         if not self._has_kis_credentials():
             return {"data_available": False, "reason": "missing_credentials"}
         try:
@@ -241,7 +245,7 @@ class DashboardService:
         smoke_ok = bool(smoke.get("success", False))
         smoke_price_ok = str(smoke.get("price", "")).startswith("OK")
 
-        probe = self._probe_kis_price("005930") if not (smoke_ok and smoke_price_ok) else {
+        probe = self._probe_kis_price("005930", allow_external=False) if not (smoke_ok and smoke_price_ok) else {
             "data_available": True,
             "symbol": str(smoke.get("symbol", "005930")),
             "current_price": int(smoke.get("sample_price", 0) or 0),
@@ -414,8 +418,8 @@ class DashboardService:
             return self._session_status_override
 
         router = self.get_data_router_status()
-        probe = self._probe_kis_price("005930")
-        holiday = self._probe_kis_holiday_status()
+        probe = self._probe_kis_price("005930", allow_external=False)
+        holiday = self._probe_kis_holiday_status(allow_external=False)
         ws = self.get_ws_status()
         rest_smoke = self._load_rest_smoke_snapshot() or {}
 
@@ -491,7 +495,7 @@ class DashboardService:
             return self._market_regime_override
 
         router = self.get_data_router_status()
-        probe = self._probe_kis_price("005930")
+        probe = self._probe_kis_price("005930", allow_external=False)
         rest_smoke = self._load_rest_smoke_snapshot() or {}
 
         # 1) 실시간 probe 우선

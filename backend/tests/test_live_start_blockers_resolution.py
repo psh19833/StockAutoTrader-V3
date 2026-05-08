@@ -30,8 +30,8 @@ def _stale_ts() -> str:
 
 def test_session_kis_source_success_regular_market(monkeypatch):
     svc = DashboardService()
-    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": True, "is_holiday": False, "open_flag": "Y"})
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": True, "current_price": 100})
+    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": True, "is_holiday": False, "open_flag": "Y"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": True, "current_price": 100})
     monkeypatch.setattr(svc, "_is_kst_regular_market_window", lambda: True)
 
     st = svc.get_session_status()
@@ -42,8 +42,8 @@ def test_session_kis_source_success_regular_market(monkeypatch):
 def test_session_fallback_kst_and_rest_verified_regular_market(monkeypatch):
     svc = DashboardService()
     monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
-    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": False, "reason": "holiday_probe_error"})
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": True, "current_price": 100})
+    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": False, "reason": "holiday_probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": True, "current_price": 100})
     monkeypatch.setattr(svc, "_is_kst_regular_market_window", lambda: True)
     monkeypatch.setattr(svc, "get_ws_status", lambda: {"status_reason": "ws_status_provider_not_configured", "connection_state": "UNKNOWN"})
     monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": True, "timestamp": _fresh_ts()})
@@ -55,8 +55,8 @@ def test_session_fallback_kst_and_rest_verified_regular_market(monkeypatch):
 
 def test_session_weekend_or_outside_hours_closed(monkeypatch):
     svc = DashboardService()
-    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": True, "is_holiday": False, "open_flag": "Y"})
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": True, "current_price": 100})
+    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": True, "is_holiday": False, "open_flag": "Y"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": True, "current_price": 100})
     monkeypatch.setattr(svc, "_is_kst_regular_market_window", lambda: False)
 
     st = svc.get_session_status()
@@ -66,8 +66,8 @@ def test_session_weekend_or_outside_hours_closed(monkeypatch):
 def test_session_source_unavailable_keeps_unknown(monkeypatch):
     svc = DashboardService()
     monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
-    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": False, "reason": "holiday_probe_error"})
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": False, "reason": "holiday_probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
     monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": False, "timestamp": _fresh_ts()})
 
     st = svc.get_session_status()
@@ -78,7 +78,7 @@ def test_session_source_unavailable_keeps_unknown(monkeypatch):
 
 def test_market_regime_known_from_fresh_snapshot(monkeypatch):
     svc = DashboardService()
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
     monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {
         "success": True,
         "timestamp": _fresh_ts(),
@@ -95,7 +95,7 @@ def test_market_regime_known_from_fresh_snapshot(monkeypatch):
 
 def test_market_regime_unknown_when_snapshot_stale(monkeypatch):
     svc = DashboardService()
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
     monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {
         "success": True,
         "timestamp": _stale_ts(),
@@ -109,7 +109,7 @@ def test_market_regime_unknown_when_snapshot_stale(monkeypatch):
 
 def test_market_regime_unknown_when_change_rate_missing(monkeypatch):
     svc = DashboardService()
-    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "probe_error"})
     monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {
         "success": True,
         "timestamp": _fresh_ts(),

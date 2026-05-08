@@ -99,6 +99,55 @@ def test_runtime_dry_run_still_works():
     assert isinstance(dry.get("counts"), dict)
 
 
+def test_runtime_start_live_rejects_missing_confirm_account():
+    payload = {"confirm": "CONFIRM_LIVE_AUTO_TRADING", "interval_sec": 10}
+    result = _run(main.runtime_start_live(payload))
+    assert result.get("started") is False
+    assert result.get("reason") == "LIVE_CONFIRM_ACCOUNT_REQUIRED"
+
+
+def test_runtime_start_live_rejects_confirm_account_mismatch(monkeypatch):
+    monkeypatch.setenv("KIS_ACCOUNT_NO", "TEST-ACCOUNT-01")
+    payload = {
+        "confirm": "CONFIRM_LIVE_AUTO_TRADING",
+        "confirm_account": "00000000-00",
+        "interval_sec": 10,
+    }
+    result = _run(main.runtime_start_live(payload))
+    assert result.get("started") is False
+    assert result.get("reason") == "LIVE_CONFIRM_ACCOUNT_MISMATCH"
+
+
+def test_runtime_start_live_accepts_account_match_but_still_blocks_on_other_blockers(monkeypatch):
+    monkeypatch.setenv("KIS_ACCOUNT_NO", "TEST-ACCOUNT-01")
+
+    forced_checks = {
+        "LIVE_TRADING_ENABLED_TRUE": True,
+        "CONFIRM_ENV_SET": True,
+        "EMERGENCY_STOP_INACTIVE": True,
+        "KIS_REST_AVAILABLE": True,
+        "KIS_WS_AVAILABLE": True,
+        "SESSION_REGULAR_MARKET": False,
+        "MARKET_REGIME_KNOWN": True,
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
+        "RISK_LIMITS_LOADED": True,
+        "TELEGRAM_STATUS_AVAILABLE": True,
+        "AUDIT_LOGGING_ACTIVE": True,
+        "FILL_RECONCILIATION_ACTIVE": True,
+    }
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+
+    payload = {
+        "confirm": "CONFIRM_LIVE_AUTO_TRADING",
+        "confirm_account": "TEST-ACCOUNT-01",
+        "interval_sec": 10,
+    }
+    result = _run(main.runtime_start_live(payload))
+    assert result.get("started") is False
+    assert result.get("reason") == "LIVE_START_PRECONDITION_FAILED"
+    assert "SESSION_REGULAR_MARKET" in (result.get("block_reasons") or [])
+
+
 def test_runtime_start_status_stop_cycle():
     started = _run(main.runtime_start(mode="dry-run", session="REGULAR_MARKET", interval_sec=1))
     assert started.get("started") is True or started.get("reason") == "already_running"

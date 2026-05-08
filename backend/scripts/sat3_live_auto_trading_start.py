@@ -28,6 +28,7 @@ def main() -> int:
 
     payload = {
         "confirm": "CONFIRM_LIVE_AUTO_TRADING",
+        "confirm_account": str(args.confirm_account or "").strip(),
         "max_daily_loss_krw": args.max_daily_loss_krw,
         "max_position_count": args.max_position_count,
         "max_order_amount_krw": args.max_order_amount_krw,

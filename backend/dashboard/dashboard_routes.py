@@ -236,6 +236,10 @@ def handle_get_audit_event_detail(event_id: str) -> dict[str, Any]:
 def handle_get_telegram_status() -> dict[str, Any]:
     from dashboard.dashboard_models import TelegramStatusView
     import os
+
+    explicit_probe = str(os.getenv("SAT3_DASHBOARD_TELEGRAM_PROBE", "false")).strip().lower() in {"1", "true", "yes", "on", "y"}
+    if not explicit_probe:
+        return _to_dict(TelegramStatusView(connected=False, error="external_probe_disabled"))
     try:
         import urllib.request, json
         token = os.getenv("TELEGRAM_BOT_TOKEN", "")
