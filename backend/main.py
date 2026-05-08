@@ -110,11 +110,42 @@ def _risk_limits_loaded() -> tuple[bool, list[str]]:
     return len(missing_or_invalid) == 0, missing_or_invalid
 
 
+def _get_telegram_target_readiness() -> tuple[bool, dict[str, object]]:
+    """Readiness check for Telegram target validity without network calls.
+
+    정책:
+    - 단순 토큰/chat_id 존재만으로는 통과시키지 않음
+    - explicit target 설정 + 최근 성공 이력 플래그가 있어야 TELEGRAM_TARGET_VALID 통과
+    - 실제 전송/외부 호출은 수행하지 않음
+    """
+    has_token = bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
+    has_chat_id = bool(os.getenv("TELEGRAM_CHAT_ID", "").strip())
+    has_base_credentials = has_token and has_chat_id
+
+    explicit_target = os.getenv("SAT3_TELEGRAM_EXPLICIT_TARGET", "").strip()
+    explicit_ok_raw = os.getenv("SAT3_TELEGRAM_EXPLICIT_TARGET_OK", "").strip().lower()
+    explicit_ok = explicit_ok_raw in {"1", "true", "yes", "on"}
+
+    default_ok_raw = os.getenv("SAT3_TELEGRAM_DEFAULT_TARGET_OK", "").strip().lower()
+    default_ok = default_ok_raw in {"1", "true", "yes", "on"}
+
+    target_valid = bool(has_base_credentials and explicit_target and explicit_ok)
+    reason = "explicit_target_verified" if target_valid else "explicit_target_not_verified"
+
+    return target_valid, {
+        "telegram_base_credentials": has_base_credentials,
+        "telegram_default_target_ok": default_ok,
+        "telegram_explicit_target": explicit_target,
+        "telegram_explicit_target_ok": explicit_ok,
+        "telegram_target_reason": reason,
+    }
+
+
 def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
     from dashboard.dashboard_routes import get_service, handle_get_summary
 
     svc = get_service()
-    summary = handle_get_summary()
+    summary = handle_get_summary(include_live_auto_ready=False)
 
     # Reuse values already computed during summary build to avoid duplicate KIS probes
     # in the same precheck cycle (token-rate sensitive path).
@@ -137,6 +168,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         regime_source = regime_reason.split("=", 1)[1]
 
     risk_loaded, risk_missing = _risk_limits_loaded()
+    telegram_target_valid, telegram_ctx = _get_telegram_target_readiness()
 
     checks = {
         "LIVE_TRADING_ENABLED_TRUE": bool(system.live_trading_enabled),
@@ -148,7 +180,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "MARKET_REGIME_KNOWN": regime_name != "UNKNOWN",
         "PORTFOLIO_SOURCE_KIS_REST_FRESH": (not bool(summary.get("portfolio_stale", False))) and str(summary.get("portfolio_source_of_truth", "KIS_REST")) == "KIS_REST",
         "RISK_LIMITS_LOADED": risk_loaded,
-        "TELEGRAM_STATUS_AVAILABLE": bool(os.getenv("TELEGRAM_BOT_TOKEN", "") and os.getenv("TELEGRAM_CHAT_ID", "")),
+        "TELEGRAM_TARGET_VALID": telegram_target_valid,
         "AUDIT_LOGGING_ACTIVE": bool("_audit_repo" in globals()),
         "FILL_RECONCILIATION_ACTIVE": True,
     }
@@ -163,6 +195,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "ws_state": ws.get("connection_state", "UNKNOWN"),
         "risk_limits_missing": risk_missing,
         "portfolio_stale": summary.get("portfolio_stale"),
+        **telegram_ctx,
     }
     return checks, context
 

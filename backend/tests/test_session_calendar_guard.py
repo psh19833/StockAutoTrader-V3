@@ -92,6 +92,12 @@ class TestTradingCalendar:
 class TestMarketClock:
     """MarketClock 기본"""
 
+    _WEEKDAY = date(2026, 5, 7)  # Thursday
+
+    def _weekday_calendar(self, fetch_holidays_fn):
+        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays_fn)
+        return cal.check_date(self._WEEKDAY)
+
     def test_no_fetch_fn_no_calendar_unknown(self):
         """fetch 함수 없고 캘린더 없으면 기본 REGULAR_MARKET (Phase 2 default)"""
         clock = MarketClock()
@@ -116,9 +122,8 @@ class TestMarketClock:
             return ()
         def fetch_status():
             raise RuntimeError("Market status API timeout")
-        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays)
         clock = MarketClock(fetch_market_status_fn=fetch_status)
-        snap = clock.evaluate(cal.check_today())
+        snap = clock.evaluate(self._weekday_calendar(fetch_holidays))
         assert snap.session_state == TradingSessionState.SESSION_STATE_UNKNOWN
 
     def test_known_status_maps_correctly(self):
@@ -127,9 +132,8 @@ class TestMarketClock:
             return ()
         def fetch_status():
             return "STATUS_OPEN"
-        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays)
         clock = MarketClock(fetch_market_status_fn=fetch_status)
-        snap = clock.evaluate(cal.check_today())
+        snap = clock.evaluate(self._weekday_calendar(fetch_holidays))
         assert snap.session_state == TradingSessionState.REGULAR_MARKET
         assert snap.kis_market_status == "STATUS_OPEN"
 
@@ -139,9 +143,8 @@ class TestMarketClock:
             return ()
         def fetch_status():
             return "STATUS_PREOPEN"
-        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays)
         clock = MarketClock(fetch_market_status_fn=fetch_status)
-        snap = clock.evaluate(cal.check_today())
+        snap = clock.evaluate(self._weekday_calendar(fetch_holidays))
         assert snap.session_state == TradingSessionState.PRE_MARKET_AUCTION
 
     def test_close_auction_status_maps(self):
@@ -150,9 +153,8 @@ class TestMarketClock:
             return ()
         def fetch_status():
             return "STATUS_CLOSEAUCTION"
-        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays)
         clock = MarketClock(fetch_market_status_fn=fetch_status)
-        snap = clock.evaluate(cal.check_today())
+        snap = clock.evaluate(self._weekday_calendar(fetch_holidays))
         assert snap.session_state == TradingSessionState.CLOSING_AUCTION
 
     def test_afterhours_status_maps(self):
@@ -161,9 +163,8 @@ class TestMarketClock:
             return ()
         def fetch_status():
             return "STATUS_AFTERHOURS"
-        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays)
         clock = MarketClock(fetch_market_status_fn=fetch_status)
-        snap = clock.evaluate(cal.check_today())
+        snap = clock.evaluate(self._weekday_calendar(fetch_holidays))
         assert snap.session_state == TradingSessionState.AFTER_MARKET
 
     def test_unknown_status_maps_to_unknown(self):
@@ -172,9 +173,8 @@ class TestMarketClock:
             return ()
         def fetch_status():
             return "STATUS_UNKNOWN_CODE_XXX"
-        cal = TradingCalendar(fetch_holidays_fn=fetch_holidays)
         clock = MarketClock(fetch_market_status_fn=fetch_status)
-        snap = clock.evaluate(cal.check_today())
+        snap = clock.evaluate(self._weekday_calendar(fetch_holidays))
         assert snap.session_state == TradingSessionState.SESSION_STATE_UNKNOWN
 
 

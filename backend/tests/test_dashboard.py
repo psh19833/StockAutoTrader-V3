@@ -175,8 +175,25 @@ class TestDashboardSummary:
 
 
 class TestDashboardServiceReadOnlyStatus:
-    def test_default_session_status_is_unknown_and_buy_blocked(self):
+    def test_default_session_status_is_unknown_and_buy_blocked(self, monkeypatch):
+        import dashboard.dashboard_service as dashboard_service_mod
+        from datetime import datetime, timezone
+
+        class _FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                base = datetime(2026, 5, 7, 10, 0, 0, tzinfo=timezone.utc)
+                if tz is None:
+                    return base
+                return base.astimezone(tz)
+
+        monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
+
         svc = DashboardService()
+        monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": False, "reason": "holiday_probe_error"})
+        monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
+        monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": False, "timestamp": ""})
+
         session = svc.get_session_status()
         assert session.session_state == "UNKNOWN"
         assert session.buy_allowed is False

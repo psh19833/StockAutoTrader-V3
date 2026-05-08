@@ -6,6 +6,16 @@ import main
 from dashboard.dashboard_models import MarketRegimeView, SessionStatusView
 from dashboard.dashboard_routes import get_service
 from dashboard.dashboard_service import DashboardService
+import dashboard.dashboard_service as dashboard_service_mod
+
+
+class _FixedDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        base = datetime(2026, 5, 7, 10, 0, 0, tzinfo=timezone.utc)
+        if tz is None:
+            return base
+        return base.astimezone(tz)
 
 
 def _fresh_ts() -> str:
@@ -31,6 +41,7 @@ def test_session_kis_source_success_regular_market(monkeypatch):
 
 def test_session_fallback_kst_and_rest_verified_regular_market(monkeypatch):
     svc = DashboardService()
+    monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
     monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": False, "reason": "holiday_probe_error"})
     monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": True, "current_price": 100})
     monkeypatch.setattr(svc, "_is_kst_regular_market_window", lambda: True)
@@ -54,6 +65,7 @@ def test_session_weekend_or_outside_hours_closed(monkeypatch):
 
 def test_session_source_unavailable_keeps_unknown(monkeypatch):
     svc = DashboardService()
+    monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
     monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda: {"data_available": False, "reason": "holiday_probe_error"})
     monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930": {"data_available": False, "reason": "probe_error"})
     monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": False, "timestamp": _fresh_ts()})

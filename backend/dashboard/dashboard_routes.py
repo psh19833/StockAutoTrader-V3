@@ -95,13 +95,11 @@ def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MAR
     return tick
 
 
-def handle_get_summary() -> dict[str, Any]:
+def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
     svc = get_service()
 
-    try:
-        run_runtime_tick_and_sync(mode="dry-run", session="REGULAR_MARKET")
-    except Exception:
-        pass
+    # IMPORTANT: summary endpoint must stay read-only.
+    # Do not run runtime tick here.
 
     system = svc.get_system_status()
     session_view = svc.get_session_status()
@@ -140,14 +138,16 @@ def handle_get_summary() -> dict[str, Any]:
     payload["data_router"] = data_router
     payload["session"] = session_view
     payload["market_regime"] = regime_view
-    payload["live_auto_ready"] = bool(
-        system.live_trading_enabled
-        and (session_view.session_state == "REGULAR_MARKET")
-        and (regime_view.regime != "UNKNOWN")
-        and bool(data_router.get("rest_available", False))
-        and (ws_view.get("connection_state") == "CONNECTED" or ws_view.get("status_reason") == "ws_readonly_smoke_verified")
-        and (not system.emergency_stop)
-    )
+    if include_live_auto_ready:
+        try:
+            import main as _main
+
+            checks, _ctx = _main._build_live_start_checks()
+            payload["live_auto_ready"] = len([k for k, v in checks.items() if not v]) == 0
+            payload["live_start_blockers"] = [k for k, v in checks.items() if not v]
+        except Exception:
+            payload["live_auto_ready"] = False
+            payload["live_start_blockers"] = ["LIVE_READINESS_CHECK_UNAVAILABLE"]
     return payload
 
 
