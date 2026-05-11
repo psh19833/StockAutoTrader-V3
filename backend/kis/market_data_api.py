@@ -39,10 +39,12 @@ class MarketDataApi:
             if k in out:
                 price = _int(out[k])
                 break
+        change_rate = _float(out.get("prdy_ctrt", out.get("change_rate", out.get("chg_rate", 0))))
         return {"symbol": symbol, "current_price": price,
                 "open_price": _int(out.get("stck_oprc", out.get("oprc", 0))),
                 "high_price": _int(out.get("stck_hgpr", out.get("hgpr", 0))),
                 "low_price": _int(out.get("stck_lwpr", out.get("lwpr", 0))),
+                "change_rate": change_rate,
                 "source": "KIS_API", "source_endpoints": ("kis/price",),
                 "data_available": True}
 

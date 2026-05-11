@@ -53,6 +53,20 @@ def test_session_fallback_kst_and_rest_verified_regular_market(monkeypatch):
     assert st.reason == "session_source=KST_TIME_WITH_REST_VERIFIED"
 
 
+def test_session_fallback_regular_market_without_probe_when_rest_or_ws_verified(monkeypatch):
+    svc = DashboardService()
+    monkeypatch.setattr(dashboard_service_mod, "datetime", _FixedDateTime)
+    monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": False, "reason": "holiday_probe_error"})
+    monkeypatch.setattr(svc, "_probe_kis_price", lambda symbol="005930", allow_external=False: {"data_available": False, "reason": "external_probe_disabled"})
+    monkeypatch.setattr(svc, "_is_kst_regular_market_window", lambda: True)
+    monkeypatch.setattr(svc, "get_ws_status", lambda: {"status_reason": "ws_readonly_smoke_verified", "connection_state": "DISCONNECTED"})
+    monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: {"success": True, "timestamp": _fresh_ts()})
+
+    st = svc.get_session_status()
+    assert st.session_state == "REGULAR_MARKET"
+    assert st.reason == "session_source=KST_TIME_WITH_REST_VERIFIED"
+
+
 def test_session_weekend_or_outside_hours_closed(monkeypatch):
     svc = DashboardService()
     monkeypatch.setattr(svc, "_probe_kis_holiday_status", lambda allow_external=False: {"data_available": True, "is_holiday": False, "open_flag": "Y"})

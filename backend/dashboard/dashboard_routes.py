@@ -86,7 +86,16 @@ def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MAR
     from runtime.orchestrator import Orchestrator
     from runtime.scheduler import SessionState
 
-    orch = Orchestrator()
+    def _live_readiness_provider() -> tuple[bool, list[str]]:
+        try:
+            import main as _main
+            checks, _ = _main._build_live_start_checks()
+            failed = [k for k, v in checks.items() if not v]
+            return (len(failed) == 0), failed
+        except Exception:
+            return False, ["LIVE_READINESS_PROVIDER_ERROR"]
+
+    orch = Orchestrator(live_readiness_provider=_live_readiness_provider)
     session_enum = SessionState[session] if session in SessionState.__members__ else SessionState.UNKNOWN
     tick = orch.tick(session_enum, mode=mode)
     dry = tick.get("dry_run") or {}

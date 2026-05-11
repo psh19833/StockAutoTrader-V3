@@ -23,6 +23,7 @@ def test_orchestrator_live_mode_does_not_use_dry_runner_and_is_blocked_not_confi
         "BLOCKED_NOT_CONFIGURED",
         "BLOCKED_NOT_IMPLEMENTED",
         "BLOCKED_NOT_ENABLED",
+        "BLOCKED_PRECONDITION_FAILED",
     )
 
 

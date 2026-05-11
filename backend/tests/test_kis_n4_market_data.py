@@ -12,13 +12,14 @@ class TestMarketDataApi:
     def test_get_current_price(self):
         t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-price": {
             "output": {"stck_prpr": "75000", "stck_oprc": "74000",
-                       "stck_hgpr": "76000", "stck_lwpr": "73500"}
+                       "stck_hgpr": "76000", "stck_lwpr": "73500", "prdy_ctrt": "1.23"}
         }})
         api = MarketDataApi(transport=t, base_url="https://test.com")
         result = api.get_current_price("005930")
         assert result["current_price"] == 75000
         assert result["open_price"] == 74000
         assert result["high_price"] == 76000
+        assert result["change_rate"] == 1.23
 
     def test_get_orderbook(self):
         t = _make_stub(**{"/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn": {

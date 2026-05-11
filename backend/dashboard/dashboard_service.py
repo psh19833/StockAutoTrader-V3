@@ -485,13 +485,13 @@ class DashboardService:
                 detail=f"holiday source unavailable={holiday.get('reason', 'unknown')}; weekend fallback applied",
             )
 
-        if in_window and probe.get("data_available") and (rest_verified or ws_verified):
+        if in_window and (probe.get("data_available") or rest_verified or ws_verified):
             return SessionStatusView(
                 session_state="REGULAR_MARKET",
                 buy_allowed=True,
                 is_trading_day=True,
                 reason="session_source=KST_TIME_WITH_REST_VERIFIED",
-                detail=f"holiday source unavailable={holiday.get('reason', 'unknown')}; in KST regular window with verified readonly source(rest_verified={rest_verified}, ws_verified={ws_verified})",
+                detail=f"holiday source unavailable={holiday.get('reason', 'unknown')}; in KST regular window with verified readonly source(rest_verified={rest_verified}, ws_verified={ws_verified}, probe_available={probe.get('data_available')})",
             )
 
         if probe.get("data_available") and not in_window:
