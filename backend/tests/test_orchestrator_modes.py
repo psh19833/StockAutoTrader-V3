@@ -36,3 +36,23 @@ def test_orchestrator_live_mode_blocks_when_runner_enabled_but_readiness_false(m
     assert live.get("status") == "BLOCKED_PRECONDITION_FAILED"
     assert live.get("ready") is False
     assert "SESSION_REGULAR_MARKET" in (live.get("block_reasons") or [])
+
+
+def test_orchestrator_live_mode_exposes_live_zero_counts_and_synthetic_audit_when_ready(monkeypatch):
+    monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+    orch = Orchestrator(live_readiness_provider=lambda: (True, []))
+
+    result = orch.tick(SessionState.REGULAR_MARKET, mode="live")
+
+    live = result.get("live") or {}
+    assert live.get("status") == "LIVE_PIPELINE_TICK_EXECUTED"
+    pipeline = live.get("pipeline") or {}
+    assert int(pipeline.get("scanner_candidates_count", 0)) == 0
+    assert int(pipeline.get("strategy_signals_count", 0)) == 0
+    assert int(pipeline.get("risk_approved_count", 0)) == 0
+    assert int(pipeline.get("order_intents_count", 0)) == 0
+    assert int(pipeline.get("synthetic_candidates_count", 0)) >= 1
+    assert int(pipeline.get("synthetic_order_intents_count", 0)) >= 1
+    assert pipeline.get("live_pipeline_reason") == "LIVE_SCANNER_NOT_CONNECTED"
+    assert pipeline.get("order_submit_enabled") is False
+    assert pipeline.get("actual_order_submitted") is False

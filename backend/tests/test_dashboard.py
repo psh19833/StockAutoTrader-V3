@@ -263,3 +263,36 @@ def test_dashboard_telegram_status_requires_explicit_opt_in(monkeypatch):
     status = routes.handle_get_telegram_status()
     assert status.get("connected") is False
     assert status.get("error") == "external_probe_disabled"
+
+
+def test_strategy_breakdown_reads_live_pipeline_from_runtime_status(monkeypatch):
+    import main
+    import dashboard.dashboard_routes as routes
+
+    snapshot = dict(main._runtime_status)
+    try:
+        main._runtime_status["last_result"] = {
+            "live": {
+                "pipeline": {
+                    "strategy_signals_sample": [
+                        {"strategy_type": "RAPID_SURGE", "side": "BUY", "synthetic": False},
+                        {"strategy_type": "RAPID_SURGE", "side": "HOLD", "synthetic": False},
+                        {"strategy_type": "MEAN_REVERT", "side": "BUY", "synthetic": False},
+                    ],
+                    "synthetic_strategy_signals_sample": [
+                        {"strategy_type": "RAPID_SURGE", "side": "BUY", "synthetic": True},
+                    ],
+                }
+            }
+        }
+        rows = routes.handle_get_strategy_breakdown()
+        by_strategy = {r.get("strategy"): r for r in rows}
+
+        assert by_strategy["RAPID_SURGE"]["trades"] == 2
+        assert by_strategy["RAPID_SURGE"]["buy_signals"] == 1
+        assert by_strategy["RAPID_SURGE"]["hold_signals"] == 1
+        assert by_strategy["MEAN_REVERT"]["trades"] == 1
+        assert by_strategy["MEAN_REVERT"]["buy_signals"] == 1
+    finally:
+        main._runtime_status.clear()
+        main._runtime_status.update(snapshot)

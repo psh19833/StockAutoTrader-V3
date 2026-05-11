@@ -392,19 +392,27 @@ def _runtime_loop() -> None:
 async def runtime_tick(mode: str = "dry-run", session: str = "REGULAR_MARKET"):
     from dashboard.dashboard_routes import run_runtime_tick_and_sync
     if mode == "dry-run":
-        return run_runtime_tick_and_sync(mode="dry-run", session=session)
+        tick = run_runtime_tick_and_sync(mode="dry-run", session=session)
+    else:
+        checks, _ctx = _build_live_start_checks()
+        failed = [k for k, v in checks.items() if not v]
+        if failed:
+            return {
+                "mode": mode,
+                "status": "RUNTIME_LIVE_MODE_BLOCKED",
+                "reason": "LIVE_START_PRECONDITION_FAILED",
+                "executed": False,
+                "block_reasons": failed,
+            }
+        tick = run_runtime_tick_and_sync(mode="live", session=session)
 
-    checks, _ctx = _build_live_start_checks()
-    failed = [k for k, v in checks.items() if not v]
-    if failed:
-        return {
-            "mode": mode,
-            "status": "RUNTIME_LIVE_MODE_BLOCKED",
-            "reason": "LIVE_START_PRECONDITION_FAILED",
-            "executed": False,
-            "block_reasons": failed,
-        }
-    return run_runtime_tick_and_sync(mode="live", session=session)
+    with _runtime_lock:
+        _runtime_status["mode"] = mode
+        _runtime_status["session"] = session
+        _runtime_status["last_result"] = tick
+        _runtime_status["tick_count"] = int(_runtime_status.get("tick_count", 0)) + 1
+        _runtime_status["last_tick_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    return tick
 
 
 @app.post("/api/runtime/start")

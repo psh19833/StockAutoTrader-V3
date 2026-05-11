@@ -43,6 +43,14 @@ class ScannerCandidateView:
     included: bool
     excluded_reason: str | None = None
     symbol_name: str = ""
+    generated_at: str = ""
+    source: str = ""
+    mode: str = ""
+    synthetic: bool = False
+    origin: str = ""
+    run_id: str = ""
+    scan_id: str = ""
+    is_live_candidate: bool = False
 
 
 @dataclass(frozen=True)

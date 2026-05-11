@@ -15,6 +15,7 @@ from dashboard.dashboard_models import (
     QuantScoreView,
     StrategySignalView,
     RiskDecisionView,
+    OrderStatusView,
 )
 
 # Singleton service
@@ -32,7 +33,7 @@ def get_service() -> DashboardService:
 
 # ── Route Handlers ──
 
-def _sync_dashboard_from_dry_result(dry: dict[str, Any]) -> None:
+def _sync_dashboard_from_pipeline_result(pipeline: dict[str, Any]) -> None:
     svc = get_service()
     candidates = [
         ScannerCandidateView(
@@ -41,8 +42,16 @@ def _sync_dashboard_from_dry_result(dry: dict[str, Any]) -> None:
             included=bool(c.get("included", False)),
             excluded_reason=c.get("excluded_reason"),
             symbol_name=str(c.get("symbol_name", "")),
+            generated_at=str(c.get("generated_at", "")),
+            source=str(c.get("source", "")),
+            mode=str(c.get("mode", "")),
+            synthetic=bool(c.get("synthetic", False)),
+            origin=str(c.get("origin", "")),
+            run_id=str(c.get("run_id", "")),
+            scan_id=str(c.get("scan_id", "")),
+            is_live_candidate=bool(c.get("is_live_candidate", False)),
         )
-        for c in (dry.get("candidates") or [])
+        for c in (pipeline.get("candidates") or [])
     ]
     quant_scores = [
         QuantScoreView(
@@ -53,7 +62,7 @@ def _sync_dashboard_from_dry_result(dry: dict[str, Any]) -> None:
             liquidity_score=float(s.get("liquidity_score", 0.0) or 0.0),
             momentum_score=float(s.get("momentum_score", 0.0) or 0.0),
         )
-        for s in (dry.get("scores") or [])
+        for s in (pipeline.get("scores") or [])
     ]
     signals = [
         StrategySignalView(
@@ -64,7 +73,7 @@ def _sync_dashboard_from_dry_result(dry: dict[str, Any]) -> None:
             confidence=float(sig.get("confidence", 0.0) or 0.0),
             market_regime=str(sig.get("market_regime", "UNKNOWN")),
         )
-        for sig in (dry.get("signals") or [])
+        for sig in (pipeline.get("signals") or [])
     ]
     risk_decisions = [
         RiskDecisionView(
@@ -75,13 +84,28 @@ def _sync_dashboard_from_dry_result(dry: dict[str, Any]) -> None:
             reason_code=str(r.get("reason_code", "")),
             reason_text=str(r.get("reason_text", "")),
         )
-        for r in (dry.get("risk_decisions") or [])
+        for r in (pipeline.get("risk_decisions") or [])
+    ]
+    orders = [
+        OrderStatusView(
+            order_intent_id=str(o.get("order_intent_id", f"intent_{idx}")),
+            symbol=str(o.get("symbol", "")),
+            side=str(o.get("side", "")),
+            status="INTENT_ONLY" if not bool(o.get("submitted", False)) else "SUBMITTED",
+            allowed=not bool(o.get("blocked_reason")),
+        )
+        for idx, o in enumerate((pipeline.get("order_intents") or []), start=1)
     ]
 
     svc.inject_candidates(candidates)
     svc.inject_quant_scores(quant_scores)
     svc.inject_strategy_signals(signals)
     svc.inject_risk_decisions(risk_decisions)
+    svc.inject_orders(orders)
+
+
+def _sync_dashboard_from_dry_result(dry: dict[str, Any]) -> None:
+    _sync_dashboard_from_pipeline_result(dry)
 
 
 def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MARKET") -> dict[str, Any]:
@@ -106,6 +130,20 @@ def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MAR
     dry = tick.get("dry_run") or {}
     if dry:
         _sync_dashboard_from_dry_result(dry)
+
+    if mode == "live":
+        live_real_pipeline_data = tick.get("live_real_pipeline_data") or {
+            "candidates": [],
+            "scores": [],
+            "signals": [],
+            "risk_decisions": [],
+            "order_intents": [],
+        }
+        _sync_dashboard_from_pipeline_result(live_real_pipeline_data)
+    else:
+        live_pipeline_data = tick.get("live_pipeline_data") or {}
+        if live_pipeline_data:
+            _sync_dashboard_from_pipeline_result(live_pipeline_data)
     return tick
 
 
@@ -155,9 +193,29 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
             "live_start_block_reasons": list(_main._runtime_status.get("live_start_block_reasons", []) or []),
             "reason": "Live requires strict preconditions",
         }
+        live_pipeline = (((_main._runtime_status.get("last_result") or {}).get("live") or {}).get("pipeline") or {})
+        payload["live_pipeline_summary"] = {
+            "scanner_candidates_count": int(live_pipeline.get("scanner_candidates_count", 0) or 0),
+            "strategy_signals_count": int(live_pipeline.get("strategy_signals_count", 0) or 0),
+            "buy_signals_count": int(live_pipeline.get("buy_signals_count", 0) or 0),
+            "risk_approved_count": int(live_pipeline.get("risk_approved_count", 0) or 0),
+            "risk_rejected_count": int(live_pipeline.get("risk_rejected_count", 0) or 0),
+            "order_intents_count": int(live_pipeline.get("order_intents_count", 0) or 0),
+            "actual_order_submitted": bool(live_pipeline.get("actual_order_submitted", False)),
+            "order_submit_enabled": bool(live_pipeline.get("order_submit_enabled", False)),
+            "live_pipeline_reason": str(live_pipeline.get("live_pipeline_reason", "")),
+            "scanner_status": str(live_pipeline.get("scanner_status", "")),
+            "synthetic_candidates_count": int(live_pipeline.get("synthetic_candidates_count", 0) or 0),
+            "synthetic_strategy_signals_count": int(live_pipeline.get("synthetic_strategy_signals_count", 0) or 0),
+            "synthetic_buy_signals_count": int(live_pipeline.get("synthetic_buy_signals_count", 0) or 0),
+            "synthetic_risk_approved_count": int(live_pipeline.get("synthetic_risk_approved_count", 0) or 0),
+            "synthetic_order_intents_count": int(live_pipeline.get("synthetic_order_intents_count", 0) or 0),
+            "synthetic_reason": str(live_pipeline.get("synthetic_reason", "")),
+        }
     except Exception:
         payload["runtime_status"] = {"running": False, "reason": "runtime_status_unavailable"}
         payload["runtime_live_mode_policy"] = {"runtime_api_mode": "unknown"}
+        payload["live_pipeline_summary"] = {}
 
     payload["ws_status"] = ws_view
     payload["data_router"] = data_router
@@ -414,7 +472,39 @@ def handle_get_daily_summary(date_str: str = "") -> dict[str, Any]:
 
 
 def handle_get_strategy_breakdown(date_str: str = "") -> list[dict[str, Any]]:
-    return []
+    try:
+        import main as _main
+        live_pipeline = (((_main._runtime_status.get("last_result") or {}).get("live") or {}).get("pipeline") or {})
+        signals = list(live_pipeline.get("strategy_signals_sample", []) or [])
+        if not signals:
+            return []
+
+        rows: dict[str, dict[str, Any]] = {}
+        for sig in signals:
+            strategy = str(sig.get("strategy_type", "UNKNOWN") or "UNKNOWN")
+            side = str(sig.get("side", "")).upper()
+            if strategy not in rows:
+                rows[strategy] = {
+                    "strategy": strategy,
+                    "trades": 0,
+                    "win_rate": 0.0,
+                    "total_pnl": 0,
+                    "avg_pnl": 0.0,
+                    "buy_signals": 0,
+                    "hold_signals": 0,
+                    "sell_signals": 0,
+                }
+            rows[strategy]["trades"] += 1
+            if side == "BUY":
+                rows[strategy]["buy_signals"] += 1
+            elif side in {"HOLD", "WAIT"}:
+                rows[strategy]["hold_signals"] += 1
+            elif side == "SELL":
+                rows[strategy]["sell_signals"] += 1
+
+        return list(rows.values())
+    except Exception:
+        return []
 
 
 def handle_get_logs(date_str: str = "", category: str = "system",

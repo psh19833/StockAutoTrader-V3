@@ -162,3 +162,31 @@ def test_runtime_start_status_stop_cycle():
 
     stopped = _run(main.runtime_stop())
     assert stopped.get("stopped") is True
+
+
+def test_runtime_tick_live_exposes_pipeline_summary_when_ready(monkeypatch):
+    monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+    forced_checks = {
+        "LIVE_TRADING_ENABLED_TRUE": True,
+        "CONFIRM_ENV_SET": True,
+        "EMERGENCY_STOP_INACTIVE": True,
+        "KIS_REST_AVAILABLE": True,
+        "KIS_WS_AVAILABLE": True,
+        "SESSION_REGULAR_MARKET": True,
+        "MARKET_REGIME_KNOWN": True,
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
+        "RISK_LIMITS_LOADED": True,
+        "TELEGRAM_STATUS_AVAILABLE": True,
+        "AUDIT_LOGGING_ACTIVE": True,
+        "FILL_RECONCILIATION_ACTIVE": True,
+    }
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "REGULAR_MARKET"}))
+
+    tick = _run(main.runtime_tick(mode="live", session="REGULAR_MARKET"))
+    pipeline = ((tick.get("live") or {}).get("pipeline") or {})
+    assert int(pipeline.get("scanner_candidates_count", 0)) == 0
+    assert int(pipeline.get("order_intents_count", 0)) == 0
+    assert int(pipeline.get("synthetic_candidates_count", 0)) >= 1
+    assert int(pipeline.get("synthetic_order_intents_count", 0)) >= 1
+    assert pipeline.get("live_pipeline_reason") == "LIVE_SCANNER_NOT_CONNECTED"
+    assert pipeline.get("actual_order_submitted") is False
