@@ -8,6 +8,7 @@ from typing import Any
 
 from dashboard.dashboard_service import DashboardService
 from dashboard.dashboard_snapshot import build_dashboard_summary
+from runtime.kis_snapshot_refresher import KisReadonlySnapshotRefresher
 from dashboard.dashboard_models import (
     DashboardSummary,
     ScannerCandidateView,
@@ -18,6 +19,7 @@ from dashboard.dashboard_models import (
 
 # Singleton service
 _service = DashboardService()
+_snapshot_refresher = KisReadonlySnapshotRefresher(_service)
 
 # Last successful KIS account snapshot cache (to avoid transient API failures
 # from wiping values to zeros on dashboard refresh)
@@ -95,13 +97,27 @@ def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MAR
         except Exception:
             return False, ["LIVE_READINESS_PROVIDER_ERROR"]
 
+    refresh_status = _snapshot_refresher.maybe_refresh(mode=mode, session=session)
+
     orch = Orchestrator(live_readiness_provider=_live_readiness_provider)
     session_enum = SessionState[session] if session in SessionState.__members__ else SessionState.UNKNOWN
     tick = orch.tick(session_enum, mode=mode)
+    tick["snapshot_refresh"] = refresh_status
     dry = tick.get("dry_run") or {}
     if dry:
         _sync_dashboard_from_dry_result(dry)
     return tick
+
+
+def trigger_snapshot_refresh_for_precheck(mode: str = "live", session: str = "REGULAR_MARKET") -> dict[str, Any]:
+    """Best-effort readonly snapshot refresh before live precheck.
+
+    Never raises; returns status dict for diagnostics.
+    """
+    try:
+        return _snapshot_refresher.maybe_refresh(mode=mode, session=session)
+    except Exception:
+        return {"enabled": False, "reason": "precheck_refresh_error"}
 
 
 def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:

@@ -142,9 +142,10 @@ def _get_telegram_target_readiness() -> tuple[bool, dict[str, object]]:
 
 
 def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
-    from dashboard.dashboard_routes import get_service, handle_get_summary
+    from dashboard.dashboard_routes import get_service, handle_get_summary, trigger_snapshot_refresh_for_precheck
 
     svc = get_service()
+    refresh_status = trigger_snapshot_refresh_for_precheck(mode="live", session="REGULAR_MARKET")
     summary = handle_get_summary(include_live_auto_ready=False)
 
     # Reuse values already computed during summary build to avoid duplicate KIS probes
@@ -200,6 +201,7 @@ def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
         "ws_status_reason": ws.get("status_reason", ""),
         "risk_limits_missing": risk_missing,
         "portfolio_stale": summary.get("portfolio_stale"),
+        "snapshot_refresh": refresh_status,
         **telegram_ctx,
     }
     return checks, context
