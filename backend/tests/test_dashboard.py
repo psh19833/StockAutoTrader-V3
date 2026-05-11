@@ -198,8 +198,12 @@ class TestDashboardServiceReadOnlyStatus:
         assert session.session_state == "UNKNOWN"
         assert session.buy_allowed is False
 
-    def test_default_market_regime_is_unknown_and_no_buy(self):
+    def test_default_market_regime_is_unknown_and_no_buy(self, monkeypatch):
         svc = DashboardService()
+        # Isolate test from live/operational snapshot files under data/
+        monkeypatch.setattr(svc, "_load_rest_smoke_snapshot", lambda: None)
+        monkeypatch.setattr(svc, "_load_ws_smoke_snapshot", lambda: None)
+
         regime = svc.get_market_regime()
         assert regime.regime == "UNKNOWN"
         assert regime.allow_new_buy is False
