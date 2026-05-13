@@ -164,6 +164,21 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
     # IMPORTANT: summary endpoint must stay read-only.
     # Do not run runtime tick here.
 
+    readiness = {
+        "live_auto_ready": None,
+        "live_start_blockers": [],
+    }
+    if include_live_auto_ready:
+        try:
+            import main as _main
+
+            checks, _ctx = _main._build_live_start_checks()
+            readiness["live_auto_ready"] = len([k for k, v in checks.items() if not v]) == 0
+            readiness["live_start_blockers"] = [k for k, v in checks.items() if not v]
+        except Exception:
+            readiness["live_auto_ready"] = False
+            readiness["live_start_blockers"] = ["LIVE_READINESS_CHECK_UNAVAILABLE"]
+
     system = svc.get_system_status()
     session_view = svc.get_session_status()
     regime_view = svc.get_market_regime()
@@ -222,15 +237,8 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
     payload["session"] = session_view
     payload["market_regime"] = regime_view
     if include_live_auto_ready:
-        try:
-            import main as _main
-
-            checks, _ctx = _main._build_live_start_checks()
-            payload["live_auto_ready"] = len([k for k, v in checks.items() if not v]) == 0
-            payload["live_start_blockers"] = [k for k, v in checks.items() if not v]
-        except Exception:
-            payload["live_auto_ready"] = False
-            payload["live_start_blockers"] = ["LIVE_READINESS_CHECK_UNAVAILABLE"]
+        payload["live_auto_ready"] = bool(readiness["live_auto_ready"])
+        payload["live_start_blockers"] = list(readiness["live_start_blockers"])
     return payload
 
 

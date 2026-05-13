@@ -67,3 +67,85 @@ def test_dashboard_summary_does_not_call_external_kis_or_telegram(monkeypatch):
     assert isinstance(payload, dict)
     assert payload.get("session") is not None
     assert payload.get("data_router") is not None
+
+
+def test_dashboard_summary_refreshes_before_reported_readiness(monkeypatch):
+    import dashboard.dashboard_snapshot as snapshot_mod
+
+    class _Status:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class _FakeService:
+        def __init__(self):
+            self.refreshed = False
+
+        def get_system_status(self):
+            return _Status(live_trading_enabled=True, emergency_stop=False, modules_loaded=True, total_tests=1)
+
+        def get_session_status(self):
+            if self.refreshed:
+                return _Status(session_state="REGULAR_MARKET", buy_allowed=True, is_trading_day=True, reason="refreshed")
+            return _Status(session_state="UNKNOWN", buy_allowed=False, is_trading_day=False, reason="stale")
+
+        def get_market_regime(self):
+            if self.refreshed:
+                return _Status(regime="NEUTRAL", allow_new_buy=True, total_score=55.0, candidate_score_adjustment=0.0, reason="refreshed")
+            return _Status(regime="UNKNOWN", allow_new_buy=False, total_score=0.0, candidate_score_adjustment=0.0, reason="stale")
+
+        def get_ws_status(self):
+            if self.refreshed:
+                return {"connection_state": "DISCONNECTED", "snapshot_fresh": True, "status_reason": "verified"}
+            return {"connection_state": "UNKNOWN", "snapshot_fresh": False, "status_reason": "stale"}
+
+        def get_data_router_status(self):
+            if self.refreshed:
+                return {"rest_available": True, "rest_snapshot_fresh": True, "ws_snapshot_fresh": True, "source": "KIS_API_REST"}
+            return {"rest_available": False, "rest_snapshot_fresh": False, "ws_snapshot_fresh": False, "source": "KIS_API_REST"}
+
+        def get_candidates(self):
+            return []
+
+        def get_quant_scores(self):
+            return []
+
+        def get_strategy_signals(self):
+            return []
+
+        def get_risk_decisions(self):
+            return []
+
+        def get_orders(self):
+            return []
+
+        def get_fills(self):
+            return []
+
+    fake_service = _FakeService()
+
+    monkeypatch.setattr(routes, "get_service", lambda: fake_service)
+    monkeypatch.setattr(snapshot_mod, "_service", fake_service)
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (fake_service.__dict__.update(refreshed=True) or {
+        "LIVE_TRADING_ENABLED_TRUE": True,
+        "CONFIRM_ENV_SET": True,
+        "EMERGENCY_STOP_INACTIVE": True,
+        "KIS_REST_AVAILABLE": True,
+        "KIS_REST_FRESH": True,
+        "KIS_WS_AVAILABLE": True,
+        "KIS_WS_FRESH": True,
+        "SESSION_REGULAR_MARKET": True,
+        "MARKET_REGIME_KNOWN": True,
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
+        "RISK_LIMITS_LOADED": True,
+        "TELEGRAM_TARGET_VALID": True,
+        "AUDIT_LOGGING_ACTIVE": True,
+        "FILL_RECONCILIATION_ACTIVE": True,
+    }, {"session": "REGULAR_MARKET"}))
+
+    payload = routes.handle_get_summary(include_live_auto_ready=True)
+    assert payload["live_auto_ready"] is True
+    assert payload["live_start_blockers"] == []
+    assert getattr(payload["session"], "session_state") == "REGULAR_MARKET"
+    assert getattr(payload["market_regime"], "regime") == "NEUTRAL"
+    assert payload["data_router"]["rest_snapshot_fresh"] is True
+    assert payload["ws_status"]["snapshot_fresh"] is True
