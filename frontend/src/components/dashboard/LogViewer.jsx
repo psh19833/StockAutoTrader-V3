@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchLogs, fetchLogDates } from "../../api/dashboardApi";
 
 const CATS = ["system", "trading", "scanner", "quant", "risk", "websocket", "telegram", "emergency"];

@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function DataRouterStatusCard({ data }) {
   if (!data) return <div className="card"><h3>데이터 라우터</h3><p>데이터 없음</p></div>;

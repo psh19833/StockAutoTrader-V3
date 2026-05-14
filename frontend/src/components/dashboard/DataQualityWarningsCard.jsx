@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function DataQualityWarningsCard({ warnings }) {
   if (!warnings || warnings.length === 0) return null;

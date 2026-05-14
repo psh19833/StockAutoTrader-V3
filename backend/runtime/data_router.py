@@ -53,7 +53,10 @@ class MarketDataRouter:
         """Best-effort staleness check using received_at or fetched_at."""
         ts = getattr(obj, "received_at", None) or getattr(obj, "fetched_at", None)
         if not isinstance(ts, datetime):
-            return False
+            self._stale_warnings.append(
+                f"market data timestamp missing or invalid: {type(obj).__name__}"
+            )
+            return True
         now = datetime.now(timezone.utc)
         age = (now - ts).total_seconds()
         return age > float(self._stale_after_seconds)
@@ -83,6 +86,9 @@ class MarketDataRouter:
         if snap is None:
             self._stale_warnings.append(f"trade_tick rest returned None: {symbol}")
             return None
+        if self._is_stale(snap):
+            self._stale_warnings.append(f"trade_tick rest snapshot stale or invalid: {symbol}")
+            return None
 
         try:
             self._cache.put_trade_tick(symbol, snap)
@@ -111,6 +117,9 @@ class MarketDataRouter:
 
         if snap is None:
             self._stale_warnings.append(f"orderbook rest returned None: {symbol}")
+            return None
+        if self._is_stale(snap):
+            self._stale_warnings.append(f"orderbook rest snapshot stale or invalid: {symbol}")
             return None
 
         try:

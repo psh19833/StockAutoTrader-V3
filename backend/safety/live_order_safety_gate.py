@@ -51,11 +51,11 @@ class LiveOrderSafetyGate:
         session: str,
         market_regime: str,
         risk_approved: bool,
-        quote_stale: bool = False,
-        orderbook_stale: bool = False,
-        max_daily_loss_exceeded: bool = False,
-        duplicate_order: bool = False,
-        ws_connected: bool = True,
+        quote_stale: Optional[bool] = None,
+        orderbook_stale: Optional[bool] = None,
+        max_daily_loss_exceeded: Optional[bool] = None,
+        duplicate_order: Optional[bool] = None,
+        ws_connected: Optional[bool] = None,
     ) -> SafetyGateResult:
         """Run all safety checks (10-layer).
 
@@ -72,16 +72,16 @@ class LiveOrderSafetyGate:
                             f"Market regime {market_regime} blocks orders"),
             SafetyGateCheck("RISK_APPROVED", risk_approved,
                             "Risk decision not approved"),
-            SafetyGateCheck("QUOTE_FRESH", not quote_stale,
-                            "Quote data is stale"),
-            SafetyGateCheck("ORDERBOOK_FRESH", not orderbook_stale,
-                            "Orderbook data is stale"),
-            SafetyGateCheck("MAX_DAILY_LOSS", not max_daily_loss_exceeded,
-                            "Max daily loss exceeded (5% of deposit)"),
-            SafetyGateCheck("DUPLICATE_ORDER", not duplicate_order,
-                            "Duplicate order detected"),
-            SafetyGateCheck("WS_CONNECTED", ws_connected,
-                            "WebSocket disconnected — risk too high"),
+            SafetyGateCheck("QUOTE_FRESH", quote_stale is False,
+                            "Quote data is stale or freshness is unknown"),
+            SafetyGateCheck("ORDERBOOK_FRESH", orderbook_stale is False,
+                            "Orderbook data is stale or freshness is unknown"),
+            SafetyGateCheck("MAX_DAILY_LOSS", max_daily_loss_exceeded is False,
+                            "Max daily loss exceeded or loss state is unknown"),
+            SafetyGateCheck("DUPLICATE_ORDER", duplicate_order is False,
+                            "Duplicate order detected or duplicate state is unknown"),
+            SafetyGateCheck("WS_CONNECTED", ws_connected is True,
+                            "WebSocket disconnected or connection state is unknown"),
         ]
 
         passed = all(c.passed for c in checks)

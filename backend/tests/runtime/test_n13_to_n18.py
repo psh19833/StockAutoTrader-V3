@@ -31,8 +31,19 @@ class TestSafetyGate:
         from safety.live_order_safety_gate import LiveOrderSafetyGate
         gate = LiveOrderSafetyGate()
         result = gate.check(live_trading_enabled=True, session="REGULAR_MARKET",
-                            market_regime="NORMAL", risk_approved=True)
+                            market_regime="NORMAL", risk_approved=True,
+                            quote_stale=False, orderbook_stale=False,
+                            max_daily_loss_exceeded=False, duplicate_order=False,
+                            ws_connected=True)
         assert result.passed is True
+
+    def test_missing_freshness_inputs_block_fail_closed(self):
+        from safety.live_order_safety_gate import LiveOrderSafetyGate
+        gate = LiveOrderSafetyGate()
+        result = gate.check(live_trading_enabled=True, session="REGULAR_MARKET",
+                            market_regime="NORMAL", risk_approved=True)
+        assert result.passed is False
+        assert any("unknown" in r.lower() for r in result.block_reasons)
 
     def test_stale_quote_blocks(self):
         from safety.live_order_safety_gate import LiveOrderSafetyGate

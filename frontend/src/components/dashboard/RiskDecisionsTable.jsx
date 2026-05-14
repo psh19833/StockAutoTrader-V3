@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function RiskDecisionsTable({ decisions }) {
   if (!decisions.length) return <div className="card"><h3>리스크 판정</h3><p>없음</p></div>;

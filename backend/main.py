@@ -141,11 +141,14 @@ def _get_telegram_target_readiness() -> tuple[bool, dict[str, object]]:
     }
 
 
-def _build_live_start_checks() -> tuple[dict[str, bool], dict[str, object]]:
+def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, bool], dict[str, object]]:
     from dashboard.dashboard_routes import get_service, handle_get_summary, trigger_snapshot_refresh_for_precheck
 
     svc = get_service()
-    refresh_status = trigger_snapshot_refresh_for_precheck(mode="live", session="REGULAR_MARKET")
+    if refresh_snapshots:
+        refresh_status = trigger_snapshot_refresh_for_precheck(mode="live", session="REGULAR_MARKET")
+    else:
+        refresh_status = {"enabled": False, "reason": "read_only_summary_no_refresh"}
     summary = handle_get_summary(include_live_auto_ready=False)
 
     # Reuse values already computed during summary build to avoid duplicate KIS probes

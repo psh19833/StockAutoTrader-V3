@@ -37,6 +37,6 @@ logs/YYYY-MM-DD/
 ## .env 설정
 
 ```
-TELEGRAM_BOT_TOKEN=8778064025:...
-TELEGRAM_CHAT_ID=2118976841
+TELEGRAM_BOT_TOKEN=<bot_token_from_env>
+TELEGRAM_CHAT_ID=<verified_chat_id_from_env>
 ```

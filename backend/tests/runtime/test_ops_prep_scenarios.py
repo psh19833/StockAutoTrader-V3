@@ -107,6 +107,8 @@ class TestScenarioH_AllPassedAutoStart:
             risk_approved=True,
             quote_stale=False,
             orderbook_stale=False,
+            max_daily_loss_exceeded=False,
+            duplicate_order=False,
             ws_connected=True,
         )
         assert result.passed is True

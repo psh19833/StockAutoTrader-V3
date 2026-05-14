@@ -1,4 +1,3 @@
-import React from "react";
 
 const stateMap = { CONNECTED: "safe", CONNECTING: "warn", DISCONNECTED: "danger", ERROR: "danger", RECONNECTING: "warn" };
 const labelMap = { CONNECTED: "연결됨", CONNECTING: "연결 중", DISCONNECTED: "끊김", ERROR: "오류", RECONNECTING: "재연결 중" };

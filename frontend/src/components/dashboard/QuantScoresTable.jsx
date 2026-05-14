@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function QuantScoresTable({ scores }) {
   const keys = Object.keys(scores);

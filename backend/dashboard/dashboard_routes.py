@@ -115,7 +115,7 @@ def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MAR
     def _live_readiness_provider() -> tuple[bool, list[str]]:
         try:
             import main as _main
-            checks, _ = _main._build_live_start_checks()
+            checks, _ = _main._build_live_start_checks(refresh_snapshots=False)
             failed = [k for k, v in checks.items() if not v]
             return (len(failed) == 0), failed
         except Exception:
@@ -172,7 +172,7 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
         try:
             import main as _main
 
-            checks, _ctx = _main._build_live_start_checks()
+            checks, _ctx = _main._build_live_start_checks(refresh_snapshots=False)
             readiness["live_auto_ready"] = len([k for k, v in checks.items() if not v]) == 0
             readiness["live_start_blockers"] = [k for k, v in checks.items() if not v]
         except Exception:

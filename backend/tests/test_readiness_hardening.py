@@ -30,7 +30,7 @@ def test_summary_live_auto_ready_uses_runtime_checks_source_of_truth(monkeypatch
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
 
     payload = routes.handle_get_summary(include_live_auto_ready=True)
     assert payload["live_auto_ready"] is False
@@ -69,7 +69,21 @@ def test_dashboard_summary_does_not_call_external_kis_or_telegram(monkeypatch):
     assert payload.get("data_router") is not None
 
 
-def test_dashboard_summary_refreshes_before_reported_readiness(monkeypatch):
+def test_dashboard_summary_live_auto_ready_does_not_call_external_kis_or_telegram(monkeypatch):
+    import urllib.request
+
+    def _forbidden_urlopen(*args, **kwargs):
+        raise AssertionError("external network call must not happen in dashboard summary")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
+    payload = routes.handle_get_summary(include_live_auto_ready=True)
+    assert isinstance(payload, dict)
+    assert payload.get("session") is not None
+    assert payload.get("data_router") is not None
+    assert "live_auto_ready" in payload
+
+
+def test_dashboard_summary_reports_read_only_current_readiness_without_snapshot_refresh(monkeypatch):
     import dashboard.dashboard_snapshot as snapshot_mod
 
     class _Status:
@@ -125,17 +139,17 @@ def test_dashboard_summary_refreshes_before_reported_readiness(monkeypatch):
 
     monkeypatch.setattr(routes, "get_service", lambda: fake_service)
     monkeypatch.setattr(snapshot_mod, "_service", fake_service)
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (fake_service.__dict__.update(refreshed=True) or {
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: ({
         "LIVE_TRADING_ENABLED_TRUE": True,
         "CONFIRM_ENV_SET": True,
         "EMERGENCY_STOP_INACTIVE": True,
-        "KIS_REST_AVAILABLE": True,
-        "KIS_REST_FRESH": True,
-        "KIS_WS_AVAILABLE": True,
-        "KIS_WS_FRESH": True,
-        "SESSION_REGULAR_MARKET": True,
-        "MARKET_REGIME_KNOWN": True,
-        "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
+        "KIS_REST_AVAILABLE": fake_service.refreshed,
+        "KIS_REST_FRESH": fake_service.refreshed,
+        "KIS_WS_AVAILABLE": fake_service.refreshed,
+        "KIS_WS_FRESH": fake_service.refreshed,
+        "SESSION_REGULAR_MARKET": fake_service.refreshed,
+        "MARKET_REGIME_KNOWN": fake_service.refreshed,
+        "PORTFOLIO_SOURCE_KIS_REST_FRESH": fake_service.refreshed,
         "RISK_LIMITS_LOADED": True,
         "TELEGRAM_TARGET_VALID": True,
         "AUDIT_LOGGING_ACTIVE": True,
@@ -143,9 +157,10 @@ def test_dashboard_summary_refreshes_before_reported_readiness(monkeypatch):
     }, {"session": "REGULAR_MARKET"}))
 
     payload = routes.handle_get_summary(include_live_auto_ready=True)
-    assert payload["live_auto_ready"] is True
-    assert payload["live_start_blockers"] == []
-    assert getattr(payload["session"], "session_state") == "REGULAR_MARKET"
-    assert getattr(payload["market_regime"], "regime") == "NEUTRAL"
-    assert payload["data_router"]["rest_snapshot_fresh"] is True
-    assert payload["ws_status"]["snapshot_fresh"] is True
+    assert payload["live_auto_ready"] is False
+    assert "KIS_REST_AVAILABLE" in payload["live_start_blockers"]
+    assert fake_service.refreshed is False
+    assert getattr(payload["session"], "session_state") == "UNKNOWN"
+    assert getattr(payload["market_regime"], "regime") == "UNKNOWN"
+    assert payload["data_router"]["rest_snapshot_fresh"] is False
+    assert payload["ws_status"]["snapshot_fresh"] is False

@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 function safeStringify(obj) {
   try {
     return JSON.stringify(obj, null, 2);
-  } catch (e) {
+  } catch {
     return String(obj);
   }
 }

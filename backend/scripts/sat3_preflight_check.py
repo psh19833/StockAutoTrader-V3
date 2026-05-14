@@ -6,7 +6,7 @@ Usage:
 
 Checks:
   - .env exists, required keys present (values NOT displayed)
-  - LIVE_TRADING_ENABLED=false
+  - LIVE_TRADING_ENABLED=false, or true with explicit live-auto-trading confirmation
   - SafetyGate defaults BLOCKED
   - Emergency Stop state
   - Module imports healthy
@@ -82,8 +82,12 @@ def main() -> int:
     # ── LIVE_TRADING_ENABLED ─────────────────────────────────────────────
     live_val = os.getenv("LIVE_TRADING_ENABLED", "false").strip().lower()
     is_live = live_val in ("true", "1", "yes")
-    add("LIVE_TRADING_ENABLED", not is_live,
-        f"false (safe)" if not is_live else "WARNING: true")
+    live_confirmed = os.getenv("SAT3_CONFIRM_LIVE_AUTO_TRADING", "") == "CONFIRM_LIVE_AUTO_TRADING"
+    live_ok = (not is_live) or live_confirmed
+    add("LIVE_TRADING_ENABLED", live_ok,
+        "false (safe)" if not is_live else (
+            "true (explicit confirmation present)" if live_confirmed else "WARNING: true without explicit confirmation"
+        ))
 
     # ── Emergency Stop ───────────────────────────────────────────────────
     em_stop_path = os.path.join(PROJECT_DIR, ".emergency_stop")

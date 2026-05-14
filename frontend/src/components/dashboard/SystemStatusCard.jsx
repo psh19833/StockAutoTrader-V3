@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function SystemStatusCard({ data }) {
   if (!data) return <div className="card">데이터 없음</div>;

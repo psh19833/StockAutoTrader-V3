@@ -1,11 +1,10 @@
-import React from "react";
 
 function fmtValue(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
   try {
     return JSON.stringify(v);
-  } catch (e) {
+  } catch {
     return String(v);
   }
 }

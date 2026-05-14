@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function ScannerCandidatesTable({ candidates }) {
   if (!candidates.length) return <div className="card"><h3>스캐너 후보</h3><p>없음</p></div>;

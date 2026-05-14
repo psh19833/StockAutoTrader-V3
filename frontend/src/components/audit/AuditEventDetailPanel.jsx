@@ -1,22 +1,36 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchAuditEventDetail } from "../../api/dashboardApi";
 import EvidenceChecklistCard from "./EvidenceChecklistCard";
 import SanitizedJsonCollapse from "./SanitizedJsonCollapse";
 
 export default function AuditEventDetailPanel({ eventId }) {
-  const [detail, setDetail] = useState(null);
-  const [error, setError] = useState(null);
+  const [result, setResult] = useState({ eventId: null, detail: null, error: null });
 
   useEffect(() => {
-    if (!eventId) {
-      setDetail(null);
-      setError(null);
-      return;
+    let cancelled = false;
+
+    if (eventId) {
+      fetchAuditEventDetail(eventId)
+        .then((detail) => {
+          if (!cancelled) {
+            setResult({ eventId, detail, error: null });
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setResult({ eventId, detail: null, error });
+          }
+        });
     }
-    fetchAuditEventDetail(eventId)
-      .then(setDetail)
-      .catch(setError);
+
+    return () => {
+      cancelled = true;
+    };
   }, [eventId]);
+
+  const isCurrentResult = result.eventId === eventId;
+  const detail = isCurrentResult ? result.detail : null;
+  const error = isCurrentResult ? result.error : null;
 
   if (!eventId) {
     return (

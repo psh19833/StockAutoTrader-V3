@@ -90,3 +90,31 @@ def test_stale_cache_triggers_fallback_attempt():
     assert t is not None
     assert t.price == 200
     assert provider.tick_calls == ["005930"]
+
+
+def test_rest_snapshot_without_timestamp_fails_closed():
+    provider = FakeRestProvider()
+    provider.set_tick("005930", _Tick(symbol="005930", price=400, received_at=None))
+
+    router = MarketDataRouter(cache=MarketCache(), rest_provider=provider, ws_connected=False, stale_after_seconds=5)
+    t = router.get_latest_trade_tick("005930")
+    assert t is None
+    assert provider.tick_calls == ["005930"]
+    warnings = router.get_status().get("stale_warnings", [])
+    assert any("timestamp missing" in w for w in warnings)
+    assert any("rest snapshot stale or invalid" in w for w in warnings)
+
+
+def test_cache_object_without_timestamp_fails_closed_and_uses_rest_fallback():
+    cache = MarketCache()
+    provider = FakeRestProvider()
+
+    cache.put_trade_tick("005930", _Tick(symbol="005930", price=1, received_at=None))
+    provider.set_tick("005930", _Tick(symbol="005930", price=300, received_at=datetime.now(timezone.utc)))
+
+    router = MarketDataRouter(cache=cache, rest_provider=provider, ws_connected=True, stale_after_seconds=5)
+    t = router.get_latest_trade_tick("005930")
+    assert t is not None
+    assert t.price == 300
+    assert provider.tick_calls == ["005930"]
+    assert any("timestamp missing" in w for w in router.get_status().get("stale_warnings", []))

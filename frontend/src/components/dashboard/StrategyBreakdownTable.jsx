@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchStrategyBreakdown } from "../../api/dashboardApi";
 
 export default function StrategyBreakdownTable({ date }) {

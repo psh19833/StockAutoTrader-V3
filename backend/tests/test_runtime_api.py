@@ -58,7 +58,7 @@ def test_runtime_tick_rejects_live_mode_when_preconditions_fail(monkeypatch):
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
 
     result = _run(main.runtime_tick(mode="live", session="REGULAR_MARKET"))
     assert result.get("mode") == "live"
@@ -83,7 +83,7 @@ def test_runtime_start_rejects_live_mode_when_preconditions_fail(monkeypatch):
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
 
     started = _run(main.runtime_start(mode="live", session="REGULAR_MARKET", interval_sec=1))
     assert started.get("started") is False
@@ -135,7 +135,7 @@ def test_runtime_start_live_accepts_account_match_but_still_blocks_on_other_bloc
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "CLOSED_AFTER_MARKET"}))
 
     payload = {
         "confirm": "CONFIRM_LIVE_AUTO_TRADING",
@@ -180,7 +180,7 @@ def test_runtime_tick_live_exposes_pipeline_summary_when_ready(monkeypatch):
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "REGULAR_MARKET"}))
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "REGULAR_MARKET"}))
 
     tick = _run(main.runtime_tick(mode="live", session="REGULAR_MARKET"))
     pipeline = ((tick.get("live") or {}).get("pipeline") or {})
@@ -208,7 +208,7 @@ def test_runtime_tick_live_session_blocked_exposes_waiting_scanner_status(monkey
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    monkeypatch.setattr(main, "_build_live_start_checks", lambda: (forced_checks, {"session": "REGULAR_MARKET"}))
+    monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "REGULAR_MARKET"}))
 
     tick = _run(main.runtime_tick(mode="live", session="CLOSED_AFTER_MARKET"))
     pipeline = ((tick.get("live") or {}).get("pipeline") or {})
