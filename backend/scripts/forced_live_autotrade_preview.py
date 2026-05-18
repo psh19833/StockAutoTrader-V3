@@ -24,6 +24,7 @@ if _BACKEND_DIR not in sys.path:
 
 import argparse
 import json
+import tempfile
 import uuid
 from dataclasses import asdict
 from typing import Any
@@ -239,7 +240,11 @@ def _next_blocking_point_hint(report: dict[str, Any]) -> str | None:
     return None
 
 
-def run_preview(mode: str, symbol: str | None = None) -> dict[str, Any]:
+def run_preview(
+    mode: str,
+    symbol: str | None = None,
+    rest_provider=None,
+) -> dict[str, Any]:
     report: dict[str, Any] = {
         "mode": mode,
         "actual_order_submitted": False,
@@ -256,6 +261,13 @@ def run_preview(mode: str, symbol: str | None = None) -> dict[str, Any]:
         "soft_warnings": [],
         "hard_blocker_candidates": [],
         "next_blocking_point": None,
+        # fake/synthetic cleanup reporting (rule)
+        "synthetic": {
+            "file_created": False,
+            "path": None,
+            "auto_deleted": None,
+            "delete_error": None,
+        },
     }
 
     # Always include env-based hard blocker candidates (display only, never block preview).
@@ -268,7 +280,7 @@ def run_preview(mode: str, symbol: str | None = None) -> dict[str, Any]:
     candidate_obj: ScannerCandidate | None = None
 
     if mode == "real":
-        router = MarketDataRouter(MarketCache())
+        router = MarketDataRouter(MarketCache(), rest_provider=rest_provider)
         scanner = LiveScannerAdapter(router)
         # We force the session argument to REGULAR_MARKET to maximize scan attempt.
         scan = scanner.run_live_scan(session=SessionState.REGULAR_MARKET.value)
@@ -399,13 +411,76 @@ def run_preview(mode: str, symbol: str | None = None) -> dict[str, Any]:
         side=intent.side.value,
         qty=intent.quantity,
         price=intent.price,
+        order_type=intent.order_type.value,
         account_no="",
         account_product_code="01",
     )
     report["kis_payload_preview"] = payload
 
+    report["order_type_mapping_note"] = {
+        "order_intent_order_type": intent.order_type.value,
+        "kis_ord_dvsn": payload.get("ORD_DVSN"),
+        "kis_ord_unpr": payload.get("ORD_UNPR"),
+        "policy": "LIMIT->ORD_DVSN=00, ORD_UNPR=price; MARKET->ORD_DVSN=01, ORD_UNPR=0",
+    }
+
+    # Optional synthetic dump for rehearsal/debug (tempfile + auto-delete)
+    _maybe_dump_synthetic_candidate_json(
+        report=report,
+        candidate_obj=candidate_obj,
+        enabled=_safe_bool_env("SAT3_PREVIEW_DUMP_SYNTHETIC", False),
+    )
+
     report["next_blocking_point"] = _next_blocking_point_hint(report)
     return report
+
+
+def _maybe_dump_synthetic_candidate_json(report: dict[str, Any], candidate_obj: ScannerCandidate, enabled: bool) -> None:
+    """Optionally dump synthetic candidate JSON to a temp file and delete it.
+
+    Cleanup rules:
+    - Never writes under data/
+    - Uses tempfile
+    - Attempts deletion before returning
+    - Records deletion result in report["synthetic"]
+    """
+    if not enabled:
+        return
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".synthetic.candidate.json",
+        prefix="sat3_rehearsal_",
+        delete=False,
+    )
+    path = tmp.name
+    try:
+        def _default(o):
+            # Ensure rehearsal dump never fails on datetimes/enums.
+            return str(o)
+
+        json.dump(asdict(candidate_obj), tmp, ensure_ascii=False, indent=2, default=_default)
+        tmp.flush()
+        tmp.close()
+        report["synthetic"]["file_created"] = True
+        report["synthetic"]["path"] = path
+    except Exception as e:
+        report["synthetic"]["file_created"] = False
+        report["synthetic"]["path"] = path
+        report["synthetic"]["auto_deleted"] = False
+        report["synthetic"]["delete_error"] = f"write_failed:{type(e).__name__}:{e}"
+        return
+    finally:
+        try:
+            import os as _os
+
+            if _os.path.exists(path):
+                _os.remove(path)
+            report["synthetic"]["auto_deleted"] = True
+        except Exception as e2:  # pragma: no cover
+            report["synthetic"]["auto_deleted"] = False
+            report["synthetic"]["delete_error"] = f"delete_failed:{type(e2).__name__}:{e2}"
 
 
 def main(argv: list[str]) -> int:
@@ -414,10 +489,24 @@ def main(argv: list[str]) -> int:
     g.add_argument("--real", action="store_true", help="attempt real scanner path")
     g.add_argument("--fixture", action="store_true", help="inject fixture candidate")
     p.add_argument("--symbol", default=None, help="fixture symbol (e.g. 005930)")
+    p.add_argument(
+        "--use-real-rest",
+        action="store_true",
+        help="(read-only) try to inject KIS REST provider for --real scanner",
+    )
     args = p.parse_args(argv)
 
     mode = "real" if args.real else "fixture"
-    report = run_preview(mode=mode, symbol=args.symbol)
+
+    rest_provider = None
+    rest_provider_meta = {"configured": False, "reason": "disabled"}
+    if args.use_real_rest and mode == "real":
+        from runtime.rest_provider_factory import maybe_create_kis_rest_provider
+
+        rest_provider, rest_provider_meta = maybe_create_kis_rest_provider()
+
+    report = run_preview(mode=mode, symbol=args.symbol, rest_provider=rest_provider)
+    report["rest_provider"] = rest_provider_meta
     json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0

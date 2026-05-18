@@ -68,16 +68,36 @@ def build_cash_order_payload(
     side: str,
     qty: int,
     price: int = 0,
+    order_type: str = "LIMIT",
     account_no: str = "",
     account_product_code: str = "01",
 ) -> dict:
+    """Build KIS order-cash payload (preview-safe).
+
+    Notes (Phase2 policy):
+    - SAT3 OrderType -> KIS ORD_DVSN mapping is made explicit here.
+    - For MARKET orders, we set ORD_UNPR="0" (price ignored by exchange).
+      This aligns with the KIS official sample repo note that ORD_UNPR may be
+      omitted/blank and KIS will select a price basis; we use "0" as the safe
+      explicit value.
+    """
+    ot = (order_type or "").upper().strip()
+    if ot not in ("LIMIT", "MARKET"):
+        raise ValueError(f"Unsupported order_type: {order_type}")
+
+    # KIS order division codes (domestic stock order-cash)
+    # 00: LIMIT(지정가), 01: MARKET(시장가)
+    ord_dvsn = "00" if ot == "LIMIT" else "01"
+
+    # Price policy
+    ord_unpr = "0" if ot == "MARKET" else (str(price) if price > 0 else "0")
     return {
         "CANO": account_no.replace("-", "")[:8] if account_no else "",
         "ACNT_PRDT_CD": account_product_code,
         "PDNO": symbol,
-        "ORD_DVSN": "00",
+        "ORD_DVSN": ord_dvsn,
         "ORD_QTY": str(qty),
-        "ORD_UNPR": str(price) if price > 0 else "0",
+        "ORD_UNPR": ord_unpr,
         "CTAC_TLNO": "",
     }
 
@@ -87,6 +107,7 @@ def submit_cash_order(
     side: str,
     qty: int,
     price: int = 0,
+    order_type: str = "LIMIT",
     account_no: str = "",
     account_product_code: str = "01",
     safety_gate_approved: bool = False,
@@ -137,6 +158,7 @@ def submit_cash_order(
         side=side,
         qty=qty,
         price=price,
+        order_type=order_type,
         account_no=account_no,
         account_product_code=account_product_code,
     )

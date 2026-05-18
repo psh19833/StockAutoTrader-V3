@@ -52,6 +52,12 @@ def test_fixture_mode_reaches_payload_and_never_submits() -> None:
     assert payload.get("PDNO") == "005930"
     assert payload.get("ORD_QTY")
 
+    # Mapping note should exist.
+    note = r.get("order_type_mapping_note") or {}
+    assert note.get("order_intent_order_type") in {"MARKET", "LIMIT"}
+    assert note.get("kis_ord_dvsn")
+    assert note.get("kis_ord_unpr") is not None
+
     # Soft/hard lists exist.
     assert isinstance(r["soft_warnings"], list)
     assert isinstance(r["hard_blocker_candidates"], list)

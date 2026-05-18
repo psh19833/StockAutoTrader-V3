@@ -10,10 +10,11 @@ Rules:
 
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Any
 
 
 class RestMarketDataProvider(Protocol):
-    def get_trade_tick_snapshot(self, symbol: str): ...
+    # Return types are intentionally loose (router only requires received_at/fetched_at datetime attr).
+    def get_trade_tick_snapshot(self, symbol: str) -> Any: ...
 
-    def get_orderbook_snapshot(self, symbol: str): ...
+    def get_orderbook_snapshot(self, symbol: str) -> Any: ...
