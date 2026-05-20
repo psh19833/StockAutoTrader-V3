@@ -17,7 +17,30 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from kis.query_facade import KisQueryFacade
-from kis.ws_models import RealtimeTradeTick, RealtimeOrderBook
+from kis.ws_models import RealtimeOrderBook
+
+
+@dataclass
+class RestTradeTickSnapshot:
+    """REST snapshot shaped like a trade tick, but can carry extra fields.
+
+    MarketDataRouter requires a timestamp attribute: received_at/fetched_at.
+    LiveScannerAdapter uses trade_price/trade_volume/change_price/ask_price/bid_price.
+    """
+
+    source: str
+    symbol: str
+    received_at: datetime
+    trade_price: int
+    trade_volume: int
+    change_price: int
+    ask_price: int
+    bid_price: int
+    parsed_ok: bool = True
+
+    # Extra fields for scanner metrics mapping
+    accumulated_volume: int = 0
+    accumulated_trading_value: int = 0
 
 
 @dataclass
@@ -43,7 +66,7 @@ class KisRestMarketDataProvider:
         )
 
     def get_trade_tick_snapshot(self, symbol: str):
-        # Compose a tick-like snapshot from price/orderbook/execution-strength.
+        # Compose a tick-like snapshot from price/orderbook.
         now = datetime.now(timezone.utc)
 
         price = self._facade.get_current_price(symbol)
@@ -52,18 +75,24 @@ class KisRestMarketDataProvider:
             return None
 
         ob = self._facade.get_orderbook(symbol)
-        exe = self._facade.get_execution_strength(symbol)
 
         trade_price = int(price.get("current_price") or 0)
-        change_rate = float(price.get("change_rate") or 0.0)
-        change_price = int(trade_price * (change_rate / 100.0)) if trade_price > 0 else 0
+        change_price = int(price.get("change_price") or 0)
+        if change_price == 0:
+            change_rate = float(price.get("change_rate") or 0.0)
+            change_price = int(trade_price * (change_rate / 100.0)) if trade_price > 0 else 0
+
+        acc_volume = int(price.get("accumulated_volume") or 0)
+        acc_trading_value = int(price.get("accumulated_trading_value") or 0)
 
         ask = int(ob.get("ask_price") or 0) if ob.get("data_available") else 0
         bid = int(ob.get("bid_price") or 0) if ob.get("data_available") else 0
-        volume = int(exe.get("volume") or 0) if exe.get("data_available") else 0
 
-        # Note: We reuse WS model container for compatibility (router staleness check expects datetime).
-        tick = RealtimeTradeTick(
+        # IMPORTANT: never use orderbook quantities as "volume".
+        # Use accumulated volume from inquire-price.
+        volume = acc_volume
+
+        tick = RestTradeTickSnapshot(
             source="KIS_API_REST",
             symbol=symbol,
             received_at=now,
@@ -73,6 +102,8 @@ class KisRestMarketDataProvider:
             ask_price=ask,
             bid_price=bid,
             parsed_ok=True,
+            accumulated_volume=acc_volume,
+            accumulated_trading_value=acc_trading_value,
         )
         return tick
 

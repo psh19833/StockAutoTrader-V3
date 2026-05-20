@@ -30,6 +30,7 @@ from runtime.market_cache import MarketCache
 from runtime.data_router import MarketDataRouter
 from runtime.live_scanner import LiveScannerAdapter
 from runtime.scheduler import SessionState
+from scanner.scanner_engine import run_all_scanners
 
 
 def _utc_now() -> str:
@@ -56,12 +57,58 @@ def _peek_obj_ts(obj: Any) -> str | None:
 def _router_symbol_probe(router: MarketDataRouter, symbol: str) -> dict[str, Any]:
     tick = router.get_latest_trade_tick(symbol)
     ob = router.get_latest_orderbook(symbol)
+    stale_after = getattr(router, "_stale_after_seconds", None)
+
+    def _age_seconds(ts_iso: str | None) -> float | None:
+        if not ts_iso:
+            return None
+        try:
+            # datetime.fromisoformat supports +00:00; keep best-effort
+            dt = datetime.fromisoformat(ts_iso)
+            now = datetime.now(timezone.utc)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (now - dt).total_seconds()
+        except Exception:
+            return None
+
+    tick_ts = _peek_obj_ts(tick) if tick else None
+    ob_ts = _peek_obj_ts(ob) if ob else None
+    tick_age = _age_seconds(tick_ts)
+    ob_age = _age_seconds(ob_ts)
+
+    tick_stale = None
+    ob_stale = None
+    try:
+        if isinstance(stale_after, int) and tick_age is not None:
+            tick_stale = tick_age > float(stale_after)
+        if isinstance(stale_after, int) and ob_age is not None:
+            ob_stale = ob_age > float(stale_after)
+    except Exception:
+        pass
+
     return {
         "symbol": symbol,
         "tick_present": tick is not None,
-        "tick_ts": _peek_obj_ts(tick) if tick else None,
+        "tick_ts": tick_ts,
+        "tick_age_seconds": tick_age,
+        "tick_stale_guess": tick_stale,
+        "tick_fields": {
+            "trade_price": int(getattr(tick, "trade_price", 0) or 0) if tick else None,
+            "trade_volume": int(getattr(tick, "trade_volume", 0) or 0) if tick else None,
+            "ask_price": int(getattr(tick, "ask_price", 0) or 0) if tick else None,
+            "bid_price": int(getattr(tick, "bid_price", 0) or 0) if tick else None,
+            "change_price": int(getattr(tick, "change_price", 0) or 0) if tick else None,
+        },
         "orderbook_present": ob is not None,
-        "orderbook_ts": _peek_obj_ts(ob) if ob else None,
+        "orderbook_ts": ob_ts,
+        "orderbook_age_seconds": ob_age,
+        "orderbook_stale_guess": ob_stale,
+        "orderbook_fields": {
+            # Best-effort: different snapshot types may not share field names
+            "best_ask": int(getattr(ob, "best_ask", 0) or 0) if ob else None,
+            "best_bid": int(getattr(ob, "best_bid", 0) or 0) if ob else None,
+        },
     }
 
 
@@ -83,7 +130,57 @@ def main(argv: list[str]) -> int:
     symbols = ["005930", "000660", "035720"]
     probes = [_router_symbol_probe(router, s) for s in symbols]
 
+    # Reconstruct the exact stocks list used by LiveScannerAdapter
+    stocks: list[dict[str, Any]] = []
+    per_symbol_metrics: list[dict[str, Any]] = []
+    for s in symbols:
+        row = adapter._build_stock_metrics(s)  # diagnostic-only
+        if row is None:
+            per_symbol_metrics.append({"symbol": s, "metrics_built": False})
+            continue
+        stocks.append(row)
+        per_symbol_metrics.append(
+            {
+                "symbol": s,
+                "metrics_built": True,
+                "current_price": row.get("current_price"),
+                "volume": row.get("volume"),
+                "trading_value": row.get("trading_value"),
+                "spread_rate": row.get("spread_rate"),
+                "intraday_change_rate": row.get("intraday_change_rate"),
+            }
+        )
+
     scan = adapter.run_live_scan(session=SessionState.REGULAR_MARKET.value)
+
+    # Explain candidate_count==0 cases: all excluded in scanner_engine
+    scanner_summary: list[dict[str, Any]] = []
+    if stocks:
+        try:
+            results = run_all_scanners(stocks=stocks, market_regime="NEUTRAL", scan_run_id=scan.scan_id)
+            for r in results:
+                excluded_reasons: dict[str, int] = {}
+                included_count = 0
+                excluded_count = 0
+                for c in getattr(r, "candidates", ()) or ():
+                    if getattr(c, "included", False):
+                        included_count += 1
+                    else:
+                        excluded_count += 1
+                        reason = str(getattr(c, "excluded_reason", "") or "")
+                        excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+                top_reasons = sorted(excluded_reasons.items(), key=lambda x: x[1], reverse=True)[:5]
+                scanner_summary.append(
+                    {
+                        "scanner_type": str(getattr(r, "scanner_type", "")),
+                        "collected_count": int(getattr(r, "collected_count", 0) or 0),
+                        "included_count": included_count,
+                        "excluded_count": excluded_count,
+                        "top_excluded_reasons": top_reasons,
+                    }
+                )
+        except Exception as e:
+            scanner_summary.append({"error": f"scanner_summary_failed:{type(e).__name__}"})
 
     out: dict[str, Any] = {
         "mode": "real_scanner_data_diag",
@@ -100,6 +197,9 @@ def main(argv: list[str]) -> int:
         },
         "cache": _count_cache_symbols(cache),
         "symbol_probes": probes,
+        "stocks_built_count": len(stocks),
+        "per_symbol_metrics": per_symbol_metrics,
+        "scanner_engine_summary": scanner_summary,
         "live_scan": {
             "status": scan.status,
             "reason": scan.reason,

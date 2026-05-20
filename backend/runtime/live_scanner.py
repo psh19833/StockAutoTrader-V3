@@ -66,7 +66,10 @@ class LiveScannerAdapter:
         change_price = int(getattr(tick, "change_price", 0) or 0)
         ask = int(getattr(tick, "ask_price", 0) or 0)
         bid = int(getattr(tick, "bid_price", 0) or 0)
-        volume = int(getattr(tick, "trade_volume", 0) or 0)
+        # Prefer REST accumulated fields when available.
+        acc_vol = getattr(tick, "accumulated_volume", None)
+        acc_tv = getattr(tick, "accumulated_trading_value", None)
+        volume = int((acc_vol if acc_vol is not None else getattr(tick, "trade_volume", 0)) or 0)
 
         spread_rate = 0.0
         if ask > 0 and bid > 0:
@@ -75,6 +78,13 @@ class LiveScannerAdapter:
         change_rate = 0.0
         if trade_price > 0:
             change_rate = (change_price / trade_price) * 100.0
+
+        # trading_value: prefer accumulated trading value from REST price endpoint.
+        trading_value = 0
+        if acc_tv is not None and int(acc_tv or 0) > 0:
+            trading_value = int(acc_tv)
+        else:
+            trading_value = max(0, trade_price * max(volume, 1))
 
         # Scanner 공통 필터를 통과할 수 있는 최소 shape만 구성
         return {
@@ -87,8 +97,8 @@ class LiveScannerAdapter:
             "current_price": trade_price,
             "intraday_high": max(trade_price, trade_price + max(change_price, 0)),
             "intraday_change_rate": change_rate,
-            "trading_value": max(0, trade_price * max(volume, 1)),
-            "volume": max(volume, 1),
+            "trading_value": max(0, trading_value),
+            "volume": max(int(volume), 0),
             "volume_ratio_vs_recent_avg": 2.0,
             "spread_rate": spread_rate,
             "execution_strength": 120.0,
@@ -96,6 +106,9 @@ class LiveScannerAdapter:
             "vi_status": "INACTIVE",
             "is_management_issue": False,
             "is_investment_warning": False,
+            # scanner.filters.check_common_filters expects is_trading_halted
+            "is_trading_halted": False,
+            # keep legacy key for any downstream consumers
             "trading_halted": False,
             "pullback_from_high": 0.5,
             "rebound_volume_ratio": 1.2,

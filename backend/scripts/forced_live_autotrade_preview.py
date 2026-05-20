@@ -290,7 +290,112 @@ def run_preview(
         candidates = list(scan.candidates or [])
         report["scanner"]["candidate_count"] = len(candidates)
         if not candidates:
+            # NOTE: LiveScannerAdapter returns LIVE_SCANNER_OK even if *all* candidates were excluded.
+            # We record a more informative empty_reason and include debug details (no secrets).
             report["scanner"]["empty_reason"] = scan_reason or scan_status or "NO_CANDIDATES"
+
+            debug: dict[str, Any] = {
+                "scan_status": scan_status,
+                "scan_reason": scan_reason,
+                "stocks_built_count": 0,
+                "per_symbol": [],
+                "scanner_engine_summary": [],
+            }
+
+            # For DATA_UNAVAILABLE debugging (scanner.filters.check_common_filters)
+            required_common_fields = [
+                "current_price",
+                "trading_value",
+                "volume",
+                "spread_rate",
+                "is_trading_halted",
+                "is_management_issue",
+                "is_investment_warning",
+            ]
+
+            symbols = ["005930", "000660", "035720"]
+            stocks: list[dict[str, Any]] = []
+            for s in symbols:
+                row = scanner._build_stock_metrics(s)  # preview diagnostic-only
+                if row is None:
+                    debug["per_symbol"].append({"symbol": s, "metrics_built": False})
+                    continue
+                stocks.append(row)
+
+                missing_fields = [k for k in required_common_fields if k not in row or row.get(k) is None]
+                invalid_fields: list[str] = []
+                for k in ("current_price", "trading_value", "volume", "spread_rate"):
+                    v = row.get(k)
+                    if v in (None, "", "-", "N/A", "nan", "NaN", "null"):
+                        invalid_fields.append(f"{k}={v}")
+
+                debug["per_symbol"].append(
+                    {
+                        "symbol": s,
+                        "metrics_built": True,
+                        "current_price": row.get("current_price"),
+                        "volume": row.get("volume"),
+                        "trading_value": row.get("trading_value"),
+                        "spread_rate": row.get("spread_rate"),
+                        "intraday_change_rate": row.get("intraday_change_rate"),
+                        "price_source": "router.trade_tick_snapshot.trade_price",
+                        "volume_source": "router.trade_tick_snapshot.accumulated_volume_or_trade_volume",
+                        "trading_value_source": "router.trade_tick_snapshot.accumulated_trading_value_or_fallback",
+                        "raw_volume_candidate": row.get("volume"),
+                        "raw_trading_value_candidate": row.get("trading_value"),
+                        "trading_value_filter_min": 500_000_000,
+                        "trading_value_pass": bool((row.get("trading_value") or 0) >= 500_000_000),
+                        "price_filter_max": 1_000_000,
+                        "price_pass": bool((row.get("current_price") or 0) <= 1_000_000),
+                        "missing_required_common_fields": missing_fields,
+                        "zero_or_invalid_common_fields": invalid_fields,
+                    }
+                )
+            debug["stocks_built_count"] = len(stocks)
+
+            if stocks:
+                try:
+                    from scanner.scanner_engine import run_all_scanners
+
+                    results = run_all_scanners(
+                        stocks=stocks,
+                        market_regime="NEUTRAL",
+                        scan_run_id=scan_id,
+                    )
+                    for r in results:
+                        excluded_reasons: dict[str, int] = {}
+                        included_count = 0
+                        excluded_count = 0
+                        for c in getattr(r, "candidates", ()) or ():
+                            if getattr(c, "included", False):
+                                included_count += 1
+                            else:
+                                excluded_count += 1
+                                reason = str(getattr(c, "excluded_reason", "") or "")
+                                excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+                        top_reasons = sorted(
+                            excluded_reasons.items(),
+                            key=lambda x: x[1],
+                            reverse=True,
+                        )[:5]
+                        debug["scanner_engine_summary"].append(
+                            {
+                                "scanner_type": str(getattr(r, "scanner_type", "")),
+                                "collected_count": int(getattr(r, "collected_count", 0) or 0),
+                                "included_count": included_count,
+                                "excluded_count": excluded_count,
+                                "top_excluded_reasons": top_reasons,
+                            }
+                        )
+
+                    if scan_reason == "LIVE_SCANNER_OK":
+                        report["scanner"]["empty_reason"] = "LIVE_SCANNER_OK_BUT_NO_CANDIDATES"
+                except Exception as e:
+                    debug["scanner_engine_summary"].append(
+                        {"error": f"scanner_summary_failed:{type(e).__name__}"}
+                    )
+
+            report["scanner"]["debug"] = debug
         else:
             sel = candidates[0]
             report["scanner"]["selected_candidate"] = {

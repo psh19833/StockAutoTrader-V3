@@ -40,10 +40,20 @@ class MarketDataApi:
                 price = _int(out[k])
                 break
         change_rate = _float(out.get("prdy_ctrt", out.get("change_rate", out.get("chg_rate", 0))))
+
+        # Accumulated volume/trading value fields (KIS inquire-price)
+        # acml_vol: 누적거래량, acml_tr_pbmn: 누적거래대금
+        acc_volume = _int(out.get("acml_vol", out.get("accumulated_volume", 0)))
+        acc_trading_value = _int(out.get("acml_tr_pbmn", out.get("accumulated_trading_value", 0)))
+        change_price = _int(out.get("prdy_vrss", out.get("change_price", 0)))
+
         return {"symbol": symbol, "current_price": price,
                 "open_price": _int(out.get("stck_oprc", out.get("oprc", 0))),
                 "high_price": _int(out.get("stck_hgpr", out.get("hgpr", 0))),
                 "low_price": _int(out.get("stck_lwpr", out.get("lwpr", 0))),
+                "accumulated_volume": acc_volume,
+                "accumulated_trading_value": acc_trading_value,
+                "change_price": change_price,
                 "change_rate": change_rate,
                 "source": "KIS_API", "source_endpoints": ("kis/price",),
                 "data_available": True}
