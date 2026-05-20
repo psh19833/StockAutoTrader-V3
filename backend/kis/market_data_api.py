@@ -5,6 +5,7 @@ from kis.transport import KisTransport, StubTransport
 _PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _ORDERBOOK_PATH = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
 _EXEC_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-ccnl"
+_VOLUME_TOP_PATH = "/uapi/domestic-stock/v1/quotations/inquire-volume-top"
 
 
 class MarketDataApi:
@@ -79,6 +80,26 @@ class MarketDataApi:
                 "volume": _int(out.get("volume", out.get("acml_vol", 0))),
                 "source": "KIS_API", "source_endpoints": ("kis/execution",),
                 "data_available": True}
+
+    def get_volume_top(self, params: dict | None = None) -> dict:
+        """거래량 순위 조회 (read-only).
+
+        endpoint: inquire_trading_volume
+
+        NOTE:
+        - KIS 파라미터 스펙은 계정/권한/환경에 따라 달라질 수 있어, caller가 params를 주입할 수 있게 한다.
+        - 실패 시 data_available=False.
+        - raw payload 전체는 노출하지 않으며, 파싱은 상위 계층에서 안전하게 수행한다.
+        """
+        out = self._get("inquire_trading_volume", _VOLUME_TOP_PATH, params=params or {})
+        if not out:
+            return {"data_available": False, "source": "KIS_API", "source_endpoints": ("kis/volume_top",)}
+        return {
+            "data_available": True,
+            "source": "KIS_API",
+            "source_endpoints": ("kis/volume_top",),
+            "raw": out,
+        }
 
 
 def _int(val) -> int:

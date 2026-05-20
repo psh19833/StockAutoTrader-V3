@@ -116,7 +116,7 @@ class LiveScannerAdapter:
             "prior_intraday_gain": max(0.0, change_rate),
         }
 
-    def run_live_scan(self, session: str) -> LiveScanResult:
+    def run_live_scan(self, session: str, symbols: list[str] | None = None) -> LiveScanResult:
         generated_at = self._now()
         scan_id = self._scan_id()
 
@@ -132,8 +132,10 @@ class LiveScannerAdapter:
                 candidates=[],
             )
 
+        symbols = symbols or self._default_symbols()
+
         stocks: list[dict] = []
-        for symbol in self._default_symbols():
+        for symbol in symbols:
             row = self._build_stock_metrics(symbol)
             if row is not None:
                 stocks.append(row)

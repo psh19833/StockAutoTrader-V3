@@ -244,6 +244,9 @@ def run_preview(
     mode: str,
     symbol: str | None = None,
     rest_provider=None,
+    real_universe_top_n: int | None = None,
+    real_universe_params_json: str | None = None,
+    universe_strict: bool = False,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "mode": mode,
@@ -261,6 +264,15 @@ def run_preview(
         "soft_warnings": [],
         "hard_blocker_candidates": [],
         "next_blocking_point": None,
+        "universe": {
+            "source": "default_smoke",
+            "top_n": None,
+            "count": 3,
+            "symbols_sample": ["005930", "000660", "035720"],
+            "fetch_error": None,
+            "fallback_used": False,
+            "strict": bool(universe_strict),
+        },
         # fake/synthetic cleanup reporting (rule)
         "synthetic": {
             "file_created": False,
@@ -282,8 +294,49 @@ def run_preview(
     if mode == "real":
         router = MarketDataRouter(MarketCache(), rest_provider=rest_provider)
         scanner = LiveScannerAdapter(router)
+        # Determine symbol universe (default smoke vs optional expanded universe)
+        symbols = ["005930", "000660", "035720"]
+        if real_universe_top_n is not None:
+            report["universe"]["top_n"] = int(real_universe_top_n)
+            report["universe"]["source"] = "kis_volume_top"
+            params = None
+            if real_universe_params_json:
+                try:
+                    params = json.loads(real_universe_params_json)
+                except Exception:
+                    params = None
+                    report["universe"]["fetch_error"] = "params_json_parse_failed"
+            if rest_provider is None:
+                report["universe"]["fetch_error"] = report["universe"]["fetch_error"] or "rest_provider_disabled"
+            else:
+                try:
+                    from runtime.universe_source import fetch_universe_from_kis_volume_top
+
+                    # Use the provider's facade to avoid spinning a second auth flow.
+                    facade = getattr(rest_provider, "_facade", None)
+                    if facade is None:
+                        report["universe"]["fetch_error"] = "facade_unavailable"
+                    else:
+                        res = fetch_universe_from_kis_volume_top(facade, top_n=int(real_universe_top_n), params=params)
+                        if res.symbols:
+                            symbols = res.symbols
+                            report["universe"]["count"] = len(symbols)
+                            report["universe"]["symbols_sample"] = symbols[: min(10, len(symbols))]
+                        else:
+                            report["universe"]["fetch_error"] = report["universe"]["fetch_error"] or (res.error_type or res.error_reason or "universe_empty")
+                except Exception as e:
+                    report["universe"]["fetch_error"] = f"universe_fetch_failed:{type(e).__name__}"
+
+            if report["universe"]["fetch_error"] and not universe_strict:
+                report["universe"]["fallback_used"] = True
+                report["universe"]["source"] = "default_smoke_fallback"
+                symbols = ["005930", "000660", "035720"]
+            if report["universe"]["fetch_error"] and universe_strict:
+                # strict: keep symbols empty -> will yield NO_FRESH_DATA/candidates=0 with clear report
+                symbols = []
+
         # We force the session argument to REGULAR_MARKET to maximize scan attempt.
-        scan = scanner.run_live_scan(session=SessionState.REGULAR_MARKET.value)
+        scan = scanner.run_live_scan(session=SessionState.REGULAR_MARKET.value, symbols=symbols)
         scan_status = scan.status
         scan_reason = scan.reason
         scan_id = scan.scan_id
@@ -313,7 +366,7 @@ def run_preview(
                 "is_investment_warning",
             ]
 
-            symbols = ["005930", "000660", "035720"]
+            symbols = symbols or ["005930", "000660", "035720"]
             stocks: list[dict[str, Any]] = []
             for s in symbols:
                 row = scanner._build_stock_metrics(s)  # preview diagnostic-only
@@ -321,6 +374,21 @@ def run_preview(
                     debug["per_symbol"].append({"symbol": s, "metrics_built": False})
                     continue
                 stocks.append(row)
+
+            # trading_value_rank: computed from this universe only (preview-level)
+            sorted_by_tv = sorted(
+                [r for r in stocks if isinstance(r, dict)],
+                key=lambda r: float(r.get("trading_value") or 0),
+                reverse=True,
+            )
+            tv_rank: dict[str, int] = {str(r.get("symbol")): i + 1 for i, r in enumerate(sorted_by_tv) if r.get("symbol")}
+
+            for row in stocks:
+                sym = str(row.get("symbol"))
+                if sym in tv_rank:
+                    row["trading_value_rank"] = tv_rank[sym]
+                    row["trading_value_rank_source"] = "preview_universe_sort_by_trading_value"
+                    row["universe_size_for_rank"] = len(tv_rank)
 
                 missing_fields = [k for k in required_common_fields if k not in row or row.get(k) is None]
                 invalid_fields: list[str] = []
@@ -331,18 +399,19 @@ def run_preview(
 
                 debug["per_symbol"].append(
                     {
-                        "symbol": s,
+                        "symbol": sym,
                         "metrics_built": True,
                         "current_price": row.get("current_price"),
                         "volume": row.get("volume"),
                         "trading_value": row.get("trading_value"),
+                        "trading_value_rank": row.get("trading_value_rank"),
+                        "trading_value_rank_source": row.get("trading_value_rank_source"),
+                        "universe_size_for_rank": row.get("universe_size_for_rank"),
                         "spread_rate": row.get("spread_rate"),
                         "intraday_change_rate": row.get("intraday_change_rate"),
                         "price_source": "router.trade_tick_snapshot.trade_price",
                         "volume_source": "router.trade_tick_snapshot.accumulated_volume_or_trade_volume",
                         "trading_value_source": "router.trade_tick_snapshot.accumulated_trading_value_or_fallback",
-                        "raw_volume_candidate": row.get("volume"),
-                        "raw_trading_value_candidate": row.get("trading_value"),
                         "trading_value_filter_min": 500_000_000,
                         "trading_value_pass": bool((row.get("trading_value") or 0) >= 500_000_000),
                         "price_filter_max": 1_000_000,
@@ -599,6 +668,22 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="(read-only) try to inject KIS REST provider for --real scanner",
     )
+    p.add_argument(
+        "--real-universe-top-n",
+        type=int,
+        default=None,
+        help="(read-only) for --real: expand universe using KIS volume-top ranking (best-effort).",
+    )
+    p.add_argument(
+        "--real-universe-params-json",
+        default=None,
+        help="JSON string for KIS volume-top params (optional; avoid printing secrets).",
+    )
+    p.add_argument(
+        "--universe-strict",
+        action="store_true",
+        help="If universe expansion is requested and fetch fails, do NOT fall back to default symbols.",
+    )
     args = p.parse_args(argv)
 
     mode = "real" if args.real else "fixture"
@@ -610,7 +695,14 @@ def main(argv: list[str]) -> int:
 
         rest_provider, rest_provider_meta = maybe_create_kis_rest_provider()
 
-    report = run_preview(mode=mode, symbol=args.symbol, rest_provider=rest_provider)
+    report = run_preview(
+        mode=mode,
+        symbol=args.symbol,
+        rest_provider=rest_provider,
+        real_universe_top_n=args.real_universe_top_n,
+        real_universe_params_json=args.real_universe_params_json,
+        universe_strict=bool(args.universe_strict),
+    )
     report["rest_provider"] = rest_provider_meta
     json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")

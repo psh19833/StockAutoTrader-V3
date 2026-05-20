@@ -76,6 +76,15 @@ class KisQueryFacade:
         api = MarketDataApi(client=self._client)
         return api.get_execution_strength(symbol)
 
+    def get_volume_top(self, params: dict | None = None) -> dict:
+        """거래량 순위 조회 (read-only)."""
+        return self._safe_call(lambda: self._call_volume_top(params))
+
+    def _call_volume_top(self, params: dict | None = None) -> dict:
+        from kis.market_data_api import MarketDataApi
+        api = MarketDataApi(client=self._client)
+        return api.get_volume_top(params=params)
+
     # ── Stock Info ──
 
     def get_stock_info(self, symbol: str) -> dict:

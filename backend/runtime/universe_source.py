@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class UniverseFetchResult:
+    symbols: list[str]
+    source: str
+    top_n: int | None = None
+    error_type: str | None = None
+    error_reason: str | None = None
+    fallback_used: bool = False
+
+
+def _normalize_symbols(symbols: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in symbols:
+        s2 = str(s).strip()
+        if not s2:
+            continue
+        if s2 in seen:
+            continue
+        seen.add(s2)
+        out.append(s2)
+    return out
+
+
+def parse_symbols_from_rank_payload(payload: Any) -> list[str]:
+    """Best-effort parse of symbol list from KIS ranking payload.
+
+    We deliberately avoid hardcoding a single key name; different endpoints/versions
+    may return different key names.
+
+    Acceptable shapes:
+      - dict with output/output1/output2 as list[dict]
+      - list[dict]
+
+    Candidate symbol keys:
+      - mksc_shrn_iscd
+      - stck_shrn_iscd
+      - iscd
+      - code
+      - symbol
+    """
+    candidates = ("mksc_shrn_iscd", "stck_shrn_iscd", "iscd", "code", "symbol")
+
+    items: list[dict] = []
+    if isinstance(payload, dict):
+        for k in ("output", "output1", "output2", "data"):
+            v = payload.get(k)
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                items = v
+                break
+        # Some wrappers may pass {raw: {...}}
+        if not items and "raw" in payload and isinstance(payload["raw"], dict):
+            return parse_symbols_from_rank_payload(payload["raw"])
+    elif isinstance(payload, list):
+        if payload and isinstance(payload[0], dict):
+            items = payload
+
+    symbols: list[str] = []
+    for row in items:
+        for key in candidates:
+            if key in row and row[key]:
+                symbols.append(str(row[key]))
+                break
+
+    return _normalize_symbols(symbols)
+
+
+def fetch_universe_from_kis_volume_top(
+    facade,
+    top_n: int,
+    params: dict[str, Any] | None = None,
+) -> UniverseFetchResult:
+    """Fetch top-N symbols using KIS read-only volume-top endpoint (best-effort).
+
+    Important: This function MUST stay read-only. It only calls facade.get_volume_top.
+    """
+    try:
+        resp = facade.get_volume_top(params=params or {})
+        if not resp or not resp.get("data_available"):
+            return UniverseFetchResult(
+                symbols=[],
+                source="kis_volume_top",
+                top_n=top_n,
+                error_type=str(resp.get("error_type") if isinstance(resp, dict) else None) or "DataUnavailable",
+                error_reason=str(resp.get("reason_code") if isinstance(resp, dict) else None) or "volume_top_unavailable",
+            )
+        raw = resp.get("raw") if isinstance(resp, dict) else None
+        symbols = parse_symbols_from_rank_payload(raw)
+        return UniverseFetchResult(
+            symbols=symbols[: max(0, int(top_n))],
+            source="kis_volume_top",
+            top_n=top_n,
+        )
+    except Exception as e:
+        return UniverseFetchResult(
+            symbols=[],
+            source="kis_volume_top",
+            top_n=top_n,
+            error_type=type(e).__name__,
+            error_reason="volume_top_exception",
+        )
