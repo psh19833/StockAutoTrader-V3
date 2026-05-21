@@ -31,9 +31,10 @@ class AccountApi:
         raw_no = (self._account_no or os.getenv("KIS_ACCOUNT_NO") or "").strip()
 
         # If account_no already includes product code (e.g. "44413716-01"),
-        # treat it as authoritative and DO NOT let env override parsing.
+        # prefer splitting it regardless of separate product_code setting.
+        # This avoids accidental concatenation ("44413716-01" + "01" -> "4441371601").
         if raw_no and "-" in raw_no:
-            raw_prdt = (self._account_product_code or "").strip()
+            raw_prdt = ""
         else:
             raw_prdt = (self._account_product_code or os.getenv("KIS_ACCOUNT_PRODUCT_CODE") or "").strip()
 
