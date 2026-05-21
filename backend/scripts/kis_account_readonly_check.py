@@ -348,23 +348,37 @@ def main() -> int:
             "PDNO": symbol,
             "ORD_UNPR": "0",
             "ORD_DVSN": "01",
+            "ORD_QTY": "1",
+            "CMA_EVLU_AMT_ICLD_YN": "N",
+            "OVRS_ICLD_YN": "N",
         }
         resp = client.get_json("inquire_psbl_order", params=params)
         result["http_status"]["orderable"] = int(resp.status_code)
         if resp.status_code == 200 and isinstance(resp.body, dict) and resp.body:
-            result["orderable_query_ok"] = True
-            # presence flag only (do not store values)
             out1 = resp.body.get("output")
             out2 = resp.body.get("output1")
             out = out1 if isinstance(out1, dict) else (out2 if isinstance(out2, dict) else {})
-            # Common fields in KIS: ord_psbl_cash / ord_psbl_amt / nrcvb_buy_amt...
+            # Common fields in KIS: ord_psbl_cash / nrcvb_buy_amt / max_buy_amt / psbl_qty_calc_unpr...
             present = False
+            cash_sufficient = False
             if isinstance(out, dict):
                 for k in ["ord_psbl_cash", "ord_psbl_amt", "nrcvb_buy_amt", "max_buy_amt", "buy_psbl_amt"]:
                     if k in out:
                         present = True
+                        result["orderable_cash_field_found"] = k
                         break
+                # check numeric sufficiency for 1 share
+                try:
+                    max_buy = int(str(out.get("max_buy_amt", "0")).replace(",", ""))
+                    ref_price = int(str(out.get("psbl_qty_calc_unpr", "0")).replace(",", ""))
+                    if max_buy >= ref_price:
+                        cash_sufficient = True
+                except (ValueError, TypeError):
+                    pass
             result["orderable_cash_present"] = result["orderable_cash_present"] or present
+            if result["balance_query_ok"] or result["orderable_query_ok"]:
+                result["orderable_cash_sufficient_for_1_share"] = cash_sufficient
+            result["orderable_query_ok"] = True
         else:
             result["orderable_query_ok"] = False
             if isinstance(resp.body, dict):
