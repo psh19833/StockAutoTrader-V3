@@ -9,6 +9,10 @@ class UniverseFetchResult:
     symbols: list[str]
     source: str
     top_n: int | None = None
+    # Observability-only fields (read-only)
+    raw_row_count: int | None = None
+    parsed_symbol_count: int | None = None
+    used_symbol_count: int | None = None
     error_type: str | None = None
     error_reason: str | None = None
     fallback_used: bool = False
@@ -91,11 +95,24 @@ def fetch_universe_from_kis_volume_top(
                 error_reason=str(resp.get("reason_code") if isinstance(resp, dict) else None) or "volume_top_unavailable",
             )
         raw = resp.get("raw") if isinstance(resp, dict) else None
-        symbols = parse_symbols_from_rank_payload(raw)
+
+        raw_rows = None
+        if isinstance(raw, dict):
+            for k in ("output", "output1", "output2", "data"):
+                v = raw.get(k)
+                if isinstance(v, list):
+                    raw_rows = len(v)
+                    break
+
+        parsed = parse_symbols_from_rank_payload(raw)
+        used = parsed[: max(0, int(top_n))]
         return UniverseFetchResult(
-            symbols=symbols[: max(0, int(top_n))],
+            symbols=used,
             source="kis_volume_top",
             top_n=top_n,
+            raw_row_count=raw_rows,
+            parsed_symbol_count=len(parsed),
+            used_symbol_count=len(used),
         )
     except Exception as e:
         return UniverseFetchResult(

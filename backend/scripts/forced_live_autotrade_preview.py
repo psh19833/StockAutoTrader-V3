@@ -256,6 +256,17 @@ def run_preview(
             "candidate_count": 0,
             "selected_candidate": None,
             "empty_reason": None,
+            # Observability: safe subset of candidates when available
+            "candidates_preview": [],
+            # Observability: always include a debug skeleton (never secrets)
+            "debug": {
+                "scan_status": None,
+                "scan_reason": None,
+                "scan_id": None,
+                "stocks_built_count": 0,
+                "stocks_built_count_source": "universe_symbol_count",
+                "scanner_engine_summary": [],
+            },
         },
         "strategy": {"decision": None, "reason": None},
         "risk": {"allowed": None, "blockers": [], "warnings": []},
@@ -267,6 +278,12 @@ def run_preview(
         "universe": {
             "source": "default_smoke",
             "top_n": None,
+            "requested_top_n": None,
+            "raw_row_count": None,
+            "parsed_symbol_count": None,
+            "used_symbol_count": None,
+            "sample_count": 3,
+            "limit_reason": "default_smoke_symbols",
             "count": 3,
             "symbols_sample": ["005930", "000660", "035720"],
             "fetch_error": None,
@@ -298,7 +315,9 @@ def run_preview(
         symbols = ["005930", "000660", "035720"]
         if real_universe_top_n is not None:
             report["universe"]["top_n"] = int(real_universe_top_n)
+            report["universe"]["requested_top_n"] = int(real_universe_top_n)
             report["universe"]["source"] = "kis_volume_top"
+            report["universe"]["limit_reason"] = "requested_kis_volume_top"
             params = None
             if real_universe_params_json:
                 try:
@@ -320,8 +339,13 @@ def run_preview(
                         res = fetch_universe_from_kis_volume_top(facade, top_n=int(real_universe_top_n), params=params)
                         if res.symbols:
                             symbols = res.symbols
+                            report["universe"]["raw_row_count"] = getattr(res, "raw_row_count", None)
+                            report["universe"]["parsed_symbol_count"] = getattr(res, "parsed_symbol_count", None)
+                            report["universe"]["used_symbol_count"] = getattr(res, "used_symbol_count", None)
                             report["universe"]["count"] = len(symbols)
                             report["universe"]["symbols_sample"] = symbols[: min(10, len(symbols))]
+                            report["universe"]["sample_count"] = len(report["universe"]["symbols_sample"]) if isinstance(report["universe"]["symbols_sample"], list) else None
+                            report["universe"]["limit_reason"] = "used_symbols_from_kis_volume_top"
                         else:
                             report["universe"]["fetch_error"] = report["universe"]["fetch_error"] or (res.error_type or res.error_reason or "universe_empty")
                 except Exception as e:
@@ -330,9 +354,11 @@ def run_preview(
             if report["universe"]["fetch_error"] and not universe_strict:
                 report["universe"]["fallback_used"] = True
                 report["universe"]["source"] = "default_smoke_fallback"
+                report["universe"]["limit_reason"] = "fallback_default_smoke_on_fetch_error"
                 symbols = ["005930", "000660", "035720"]
             if report["universe"]["fetch_error"] and universe_strict:
                 # strict: keep symbols empty -> will yield NO_FRESH_DATA/candidates=0 with clear report
+                report["universe"]["limit_reason"] = "strict_mode_fetch_error"
                 symbols = []
 
         # We force the session argument to REGULAR_MARKET to maximize scan attempt.
@@ -340,6 +366,12 @@ def run_preview(
         scan_status = scan.status
         scan_reason = scan.reason
         scan_id = scan.scan_id
+
+        # Always fill debug skeleton (no secrets)
+        report["scanner"]["debug"]["scan_status"] = scan_status
+        report["scanner"]["debug"]["scan_reason"] = scan_reason
+        report["scanner"]["debug"]["scan_id"] = scan_id
+        report["scanner"]["debug"]["stocks_built_count"] = len(symbols or [])
         candidates = list(scan.candidates or [])
         report["scanner"]["candidate_count"] = len(candidates)
         if not candidates:
@@ -472,6 +504,31 @@ def run_preview(
                 "scanner_type": sel.get("scanner_type"),
                 "metrics_keys": sorted(list((sel.get("metrics") or {}).keys()))[:25],
             }
+
+            # Candidate preview list: safe subset only (no secrets)
+            preview: list[dict[str, Any]] = []
+            for c in candidates[:5]:
+                if not isinstance(c, dict):
+                    continue
+                m = dict(c.get("metrics") or {})
+                preview.append(
+                    {
+                        "symbol": c.get("symbol"),
+                        "scanner_type": c.get("scanner_type"),
+                        "score": c.get("score"),
+                        "current_price": m.get("current_price"),
+                        "trading_value": m.get("trading_value"),
+                        "trading_value_rank": c.get("trading_value_rank"),
+                        "intraday_change_rate": m.get("intraday_change_rate"),
+                    }
+                )
+            report["scanner"]["candidates_preview"] = preview
+
+            # Keep scanner_engine_summary key present; do not compute heavy summary when candidates exist.
+            report["scanner"]["debug"]["scanner_engine_summary"] = [{"note": "not_computed_when_candidates_present"}]
+
+            # Selection reason (explicit)
+            report["scanner"]["selection_reason"] = "selected_first_candidate_from_live_scan_order"
             candidate_obj = _candidate_from_live_row(sel, scan_run_id=scan_id)
 
     elif mode == "fixture":
