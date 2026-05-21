@@ -329,3 +329,74 @@ def test_failure_writes_error_final(project_root, tmp_path):
     assert sub.calls == 1
     assert out["status"] in {"REJECTED", "ERROR"}
     assert Path(out["artifacts"]["final"]).exists()
+
+
+def test_allow_real_submit_does_not_build_factory_when_flag_false(project_root, tmp_path):
+    preview = _write_preview(tmp_path)
+    sub = MockSubmitter(success=True)
+
+    built = {"count": 0}
+
+    def factory():
+        built["count"] += 1
+        return sub
+
+    _ = guard_and_submit_once(
+        project_root=project_root,
+        preview_json_path=preview,
+        confirm=CONFIRM_STRING,
+        correlation_id="c_factory0",
+        submitter=sub,
+        allow_real_submit=False,
+        submitter_factory=factory,
+        session_checker=_session_ok,
+    )
+    assert built["count"] == 0
+
+
+def test_allow_real_submit_with_wrong_confirm_never_builds_factory(project_root, tmp_path):
+    preview = _write_preview(tmp_path)
+
+    built = {"count": 0}
+
+    def factory():
+        built["count"] += 1
+        return MockSubmitter(success=True)
+
+    with pytest.raises(PilotGuardError):
+        guard_and_submit_once(
+            project_root=project_root,
+            preview_json_path=preview,
+            confirm="NOPE",
+            correlation_id="c_factory_bad",
+            submitter=None,
+            allow_real_submit=True,
+            submitter_factory=factory,
+            session_checker=_session_ok,
+        )
+    assert built["count"] == 0
+
+
+def test_allow_real_submit_builds_factory_only_when_needed(project_root, tmp_path):
+    preview = _write_preview(tmp_path)
+
+    built = {"count": 0}
+    sub = MockSubmitter(success=True, order_number="ODNO777", message="OK")
+
+    def factory():
+        built["count"] += 1
+        return sub
+
+    out = guard_and_submit_once(
+        project_root=project_root,
+        preview_json_path=preview,
+        confirm=CONFIRM_STRING,
+        correlation_id="c_factory1",
+        submitter=None,
+        allow_real_submit=True,
+        submitter_factory=factory,
+        session_checker=_session_ok,
+    )
+    assert built["count"] == 1
+    assert out["status"] == "SUBMITTED"
+    assert out["kis_order_number"] == "ODNO777"

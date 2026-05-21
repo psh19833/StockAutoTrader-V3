@@ -32,6 +32,45 @@ from typing import Any
 CONFIRM_STRING = "CONFIRM_LIVE_PILOT_SUBMIT_ONCE"
 
 
+def _build_real_guarded_submitter():
+    """Build real GuardedKisCashOrderSubmitter (wiring only).
+
+    Policy:
+    - Do NOT globally unblock order endpoints.
+    - Allow ONLY order-cash endpoint via an explicitly constructed order-scoped transport.
+    - Do not print secrets.
+    """
+    from kis.order_api import GuardedKisCashOrderSubmitter
+    from kis.token_provider import KisTokenProvider
+    from kis.order_scoped_transport import OrderScopedRealTransport
+
+    base_url = str(os.getenv("KIS_BASE_URL", "") or "").strip()
+    app_key = str(os.getenv("KIS_APP_KEY", "") or "").strip()
+    app_secret = str(os.getenv("KIS_APP_SECRET", "") or "").strip()
+    if not base_url:
+        raise RuntimeError("KIS_BASE_URL missing")
+    if not app_key or not app_secret:
+        raise RuntimeError("KIS_APP_KEY/KIS_APP_SECRET missing")
+
+    transport = OrderScopedRealTransport(
+        base_url=base_url,
+        timeout=10,
+        allow_order_paths=("/uapi/domestic-stock/v1/trading/order-cash",),
+    )
+    token_provider = KisTokenProvider(
+        app_key=app_key,
+        app_secret=app_secret,
+        base_url=base_url,
+        transport=transport,
+    )
+    return GuardedKisCashOrderSubmitter(
+        transport=transport,
+        token_provider=token_provider,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+
+
 # ── Errors / Codes ───────────────────────────────────────────────────────────
 
 class PilotGuardError(Exception):
@@ -196,6 +235,8 @@ def guard_and_submit_once(
     confirm: str,
     correlation_id: str,
     submitter,  # duck-typed
+    allow_real_submit: bool = False,
+    submitter_factory=None,
     session_checker=_default_check_session_regular_market,
 ) -> dict[str, Any]:
     """Core function used by CLI and tests.
@@ -262,6 +303,11 @@ def guard_and_submit_once(
     _require(not art.lock_path.exists(), "LOCK_EXISTS", f"lock exists: {art.lock_path.name}")
 
     # 17. submitter configured
+    # - default: caller must pass submitter (tests/mocks)
+    # - allow_real_submit=True: build a real submitter ONLY via explicit factory, in this path.
+    if submitter is None and allow_real_submit:
+        _require(submitter_factory is not None, "SUBMITTER_FACTORY_MISSING", "submitter_factory required")
+        submitter = submitter_factory()
     _require(submitter is not None, "SUBMITTER_NOT_CONFIGURED", "submitter is required")
 
     # Write lock BEFORE submit
@@ -365,6 +411,11 @@ def main() -> int:
     p.add_argument("--confirm", required=True)
     p.add_argument("--correlation-id", required=True)
     p.add_argument("--dry-run", action="store_true", help="Do not submit; only validate and write final as BLOCKED")
+    p.add_argument(
+        "--allow-real-submit",
+        action="store_true",
+        help="WIRING ONLY: attempt to build real guarded submitter (still no real submit in this phase)",
+    )
     args = p.parse_args()
 
     project_root = Path(__file__).resolve().parents[2]
@@ -374,6 +425,16 @@ def main() -> int:
     # This prevents accidental real submission.
     if not args.dry_run:
         raise SystemExit("BLOCKED: CLI requires --dry-run for now (no real submission enabled in this phase)")
+
+    # Wiring validation: only attempt when explicitly requested.
+    # Must not print secrets; must not send any order.
+    if args.allow_real_submit:
+        # Confirm must match first; if confirm is wrong we should not even try to configure submitter.
+        _require(args.confirm == CONFIRM_STRING, "CONFIRM_MISMATCH", "confirm string mismatch")
+        try:
+            _ = _build_real_guarded_submitter()
+        except Exception as e:
+            raise SystemExit(f"BLOCKED: real submitter wiring failed: {type(e).__name__}")
 
     # Dry-run uses a None submitter; we only validate guards.
     try:
