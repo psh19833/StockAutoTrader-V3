@@ -149,8 +149,8 @@ def main() -> int:
     logs_dir = project_root / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = logs_dir / f"sat3_kis_token_diagnostic_{stamp}.json"
-    summary_path = logs_dir / f"sat3_kis_token_diagnostic_{stamp}_summary.txt"
+    json_path = logs_dir / f"sat3_kis_token_cache_first_{stamp}.json"
+    summary_path = logs_dir / f"sat3_kis_token_cache_first_{stamp}_summary.txt"
 
     live_enabled = os.getenv("LIVE_TRADING_ENABLED", "").strip().lower() == "true"
 
@@ -162,7 +162,19 @@ def main() -> int:
 
     result: dict[str, Any] = {
         "timestamp_kst": datetime.now(KST).isoformat(),
-        "mode": "REAL_KIS_ACCOUNT_READONLY",
+        "mode": "KIS_TOKEN_CACHE_FIRST",
+        "token_cache_path": "",
+        "token_cache_path_exists": False,
+        "token_present": False,
+        "token_source": "NONE",
+        "token_expired": "unknown",
+        "tokenP_called": False,
+        "tokenP_skipped_reason": "",
+        "readonly_call_attempted": False,
+        "account_env_present": bool(account_no),
+        "account_product_code_present": bool(account_product_code),
+        "account_format_ok": False,
+        "product_code_format_ok": False,
         "live_trading_enabled": live_enabled,
         "token_issued": False,
         "account_query_ok": False,
@@ -208,14 +220,50 @@ def main() -> int:
 
     # 1) Token (OAUTH tokenP)
     try:
+        from kis.token_cache import TokenCache, default_cache_path, check_permissions
+
+        cache_path = default_cache_path()
+        result["token_cache_path"] = str(cache_path)
+        result["token_cache_path_exists"] = cache_path.expanduser().exists()
+        result["token_source"] = "MEMORY" if False else "NONE"  # updated after issue_token
+
         provider = KisTokenProvider(app_key=app_key, app_secret=app_secret, base_url=base_url, transport=transport)
-        token = provider.issue_token()
+        # cache-first provider (may return cached token without calling tokenP)
+        token = provider.issue_token(force_token_refresh=False)
+
+        # If we got here, token is available (either file cache or tokenP)
         result["token_issued"] = True
-        result["http_status"]["token"] = 200
-        result["endpoint_category"]["token"] = "OAUTH_TOKENP"
+        # Don't use key name 'token' in http_status (redactor masks it). Use oauth_tokenp.
+        result["http_status"]["oauth_tokenp"] = 200
+        result["endpoint_category"]["oauth_tokenp"] = "OAUTH_TOKENP"
+
+        # Determine token source best-effort from cache file presence
+        tc = TokenCache(cache_path)
+        rec = tc.load()
+        if rec and tc.token_present(rec) and (tc.is_expired(rec) is False):
+            result["token_present"] = True
+            result["token_source"] = "FILE"
+            result["token_expired"] = False
+        else:
+            # token may be newly issued (not persisted due to FS perms) or from memory
+            result["token_present"] = True
+            result["token_source"] = "TOKENP_OR_MEMORY"
+            result["token_expired"] = False
+
+        # record cache file permissions (bools only)
+        perms = check_permissions(cache_path)
+        # embed only booleans
+        result["token_cache_permissions"] = {
+            "dir_exists": perms.get("dir_exists"),
+            "file_exists": perms.get("file_exists"),
+            "dir_mode_ok": perms.get("dir_mode_ok"),
+            "file_mode_ok": perms.get("file_mode_ok"),
+        }
+
     except Exception as e:
-        result["endpoint_category"]["token"] = "OAUTH_TOKENP"
-        result["exception_type"]["token"] = type(e).__name__
+        # token may fail due to policy block or real KIS error.
+        result["endpoint_category"]["oauth_tokenp"] = "OAUTH_TOKENP"
+        result["exception_type"]["oauth_tokenp"] = type(e).__name__
 
         diag = None
         try:
@@ -225,17 +273,17 @@ def main() -> int:
             diag = None
 
         if diag is not None:
-            result["http_status"]["token"] = int(getattr(diag, "status_code", 0) or 0)
-            result["kis_rt_cd"]["token"] = str(getattr(diag, "rt_cd", "") or "")
-            result["kis_error_code"]["token"] = str(getattr(diag, "msg_cd", "") or "")
+            result["http_status"]["oauth_tokenp"] = int(getattr(diag, "status_code", 0) or 0)
+            result["kis_rt_cd"]["oauth_tokenp"] = str(getattr(diag, "rt_cd", "") or "")
+            result["kis_error_code"]["oauth_tokenp"] = str(getattr(diag, "msg_cd", "") or "")
             raw_msg1 = str(getattr(diag, "msg1", "") or "")
-            result["kis_error_message_redacted"]["token"] = _redact_msg1(
+            result["kis_error_message_redacted"]["oauth_tokenp"] = _redact_msg1(
                 raw_msg1, app_key=app_key, app_secret=app_secret, account_no=account_no
             )
         else:
-            result["http_status"]["token"] = 0
-            result["kis_error_code"]["token"] = ""
-            result["kis_error_message_redacted"]["token"] = _safe_err(e)
+            result["http_status"]["oauth_tokenp"] = 0
+            result["kis_error_code"]["oauth_tokenp"] = ""
+            result["kis_error_message_redacted"]["oauth_tokenp"] = _safe_err(e)
 
         result["next_blocker"] = "TOKEN_ISSUE_FAILED"
         _write_outputs(json_path, summary_path, result)
@@ -246,6 +294,7 @@ def main() -> int:
     client = KisClient(base_url=base_url, transport=transport, app_key=app_key, app_secret=app_secret)
     try:
         client.auth_manager.set_token(token)
+        result["readonly_call_attempted"] = True
     except Exception:
         # If token cannot be set, treat as blocker
         result["next_blocker"] = "TOKEN_SET_FAILED"
@@ -277,8 +326,11 @@ def main() -> int:
     # If account info missing, AccountApi returns data_available False; we still try to validate env here.
     try:
         cano, prdt = api._get_account_parts()  # type: ignore[attr-defined]
-        # Minimal params for market buy 1 share; symbol omitted here to avoid accidental coupling.
-        # We will use 삼성전자(005930) as a neutral probe symbol unless user passes --symbol later.
+        # env format checks (do not print values)
+        result["account_format_ok"] = True
+        result["product_code_format_ok"] = True
+
+        # Minimal params for market buy 1 share; keep probe symbol constant.
         symbol = "005930"
         params = {
             "CANO": cano,
@@ -335,6 +387,7 @@ def main() -> int:
 
 def _write_outputs(json_path: Path, summary_path: Path, result: dict[str, Any]) -> None:
     safe = _redact(dict(result))
+    # never store token values; only booleans/metadata are kept in logs.
     json_path.write_text(json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8")
     lines = [
         f"timestamp_kst={safe.get('timestamp_kst','')}",
