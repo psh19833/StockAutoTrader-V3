@@ -103,6 +103,34 @@ def _extract_kis_error(body: dict) -> tuple[str, str]:
         return "", ""
 
 
+def _redact_msg1(msg: str, *, app_key: str, app_secret: str, account_no: str) -> str:
+    """Redact suspicious secret/token/account-like patterns from KIS msg1.
+
+    We are allowed to store msg1 for diagnostics, but must redact anything that
+    resembles secrets (app key/secret), access tokens, or raw account digits.
+    """
+    import re
+
+    s = str(msg or "")
+    if not s:
+        return ""
+
+    # direct secret substrings (best-effort)
+    for secret in [app_key, app_secret]:
+        if secret and secret in s:
+            s = s.replace(secret, "[REDACTED]")
+
+    digits = "".join(ch for ch in (account_no or "") if ch.isdigit())
+    if digits and digits in s:
+        s = s.replace(digits, "[REDACTED]")
+
+    # redact long alnum token-like strings
+    s = re.sub(r"\b[A-Za-z0-9_\-]{20,}\b", "[REDACTED]", s)
+    # redact long digit runs
+    s = re.sub(r"\b\d{6,}\b", "[REDACTED]", s)
+    return s[:200]
+
+
 def _now_kst_stamp() -> str:
     return datetime.now(KST).strftime("%Y%m%d_%H%M%S")
 
@@ -121,8 +149,8 @@ def main() -> int:
     logs_dir = project_root / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = logs_dir / f"sat3_real_account_readonly_{stamp}.json"
-    summary_path = logs_dir / f"sat3_real_account_readonly_{stamp}_summary.txt"
+    json_path = logs_dir / f"sat3_kis_token_diagnostic_{stamp}.json"
+    summary_path = logs_dir / f"sat3_kis_token_diagnostic_{stamp}_summary.txt"
 
     live_enabled = os.getenv("LIVE_TRADING_ENABLED", "").strip().lower() == "true"
 
@@ -143,12 +171,16 @@ def main() -> int:
         "orderable_cash_present": False,
         "balance_present": False,
         "http_status": {},
+        "kis_rt_cd": {},
         "kis_error_code": {},
         "kis_error_message_redacted": {},
+        "exception_type": {},
+        "endpoint_category": {},
         "account_redacted": _mask_account(account_no),
         "product_code_redacted": ("**" if account_product_code else ""),
         "order_endpoint_called": False,
         "submit_cash_order_called": False,
+        "secrets_redacted": True,
         "next_blocker": "",
     }
 
@@ -174,16 +206,37 @@ def main() -> int:
 
     transport = RealTransport(base_url=base_url, timeout=20)
 
-    # 1) Token
+    # 1) Token (OAUTH tokenP)
     try:
         provider = KisTokenProvider(app_key=app_key, app_secret=app_secret, base_url=base_url, transport=transport)
         token = provider.issue_token()
         result["token_issued"] = True
         result["http_status"]["token"] = 200
+        result["endpoint_category"]["token"] = "OAUTH_TOKENP"
     except Exception as e:
-        result["http_status"]["token"] = 0
-        result["kis_error_code"]["token"] = ""
-        result["kis_error_message_redacted"]["token"] = _safe_err(e)
+        result["endpoint_category"]["token"] = "OAUTH_TOKENP"
+        result["exception_type"]["token"] = type(e).__name__
+
+        diag = None
+        try:
+            # provider is defined only if constructor above succeeded
+            diag = provider.get_last_diagnostic()  # type: ignore[possibly-undefined]
+        except Exception:
+            diag = None
+
+        if diag is not None:
+            result["http_status"]["token"] = int(getattr(diag, "status_code", 0) or 0)
+            result["kis_rt_cd"]["token"] = str(getattr(diag, "rt_cd", "") or "")
+            result["kis_error_code"]["token"] = str(getattr(diag, "msg_cd", "") or "")
+            raw_msg1 = str(getattr(diag, "msg1", "") or "")
+            result["kis_error_message_redacted"]["token"] = _redact_msg1(
+                raw_msg1, app_key=app_key, app_secret=app_secret, account_no=account_no
+            )
+        else:
+            result["http_status"]["token"] = 0
+            result["kis_error_code"]["token"] = ""
+            result["kis_error_message_redacted"]["token"] = _safe_err(e)
+
         result["next_blocker"] = "TOKEN_ISSUE_FAILED"
         _write_outputs(json_path, summary_path, result)
         _print_summary(result)
