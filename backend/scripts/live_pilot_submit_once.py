@@ -30,6 +30,7 @@ from typing import Any
 
 
 CONFIRM_STRING = "CONFIRM_LIVE_PILOT_SUBMIT_ONCE"
+FINAL_CONFIRM_STRING = "EXECUTE_REAL_KIS_ORDER_ONCE"
 
 
 def _build_real_guarded_submitter():
@@ -411,6 +412,8 @@ def main() -> int:
     p.add_argument("--confirm", required=True)
     p.add_argument("--correlation-id", required=True)
     p.add_argument("--dry-run", action="store_true", help="Do not submit; only validate and write final as BLOCKED")
+    p.add_argument("--execute-real-submit", action="store_true", help="Execute ONE real submit (requires dual confirm)")
+    p.add_argument("--final-confirm", default="", help="Must equal EXECUTE_REAL_KIS_ORDER_ONCE")
     p.add_argument(
         "--allow-real-submit",
         action="store_true",
@@ -421,22 +424,35 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[2]
     preview_path = Path(args.preview_json)
 
-    # In CLI mode, we default to dry-run unless explicitly opted out.
-    # This prevents accidental real submission.
-    if not args.dry_run:
-        raise SystemExit("BLOCKED: CLI requires --dry-run for now (no real submission enabled in this phase)")
+    # Fail-closed gating.
+    if args.execute_real_submit and args.dry_run:
+        raise SystemExit("BLOCKED: cannot combine --execute-real-submit with --dry-run")
 
-    # Wiring validation: only attempt when explicitly requested.
-    # Must not print secrets; must not send any order.
-    if args.allow_real_submit:
-        # Confirm must match first; if confirm is wrong we should not even try to configure submitter.
+    if args.execute_real_submit:
+        _require(args.confirm == CONFIRM_STRING, "CONFIRM_MISMATCH", "confirm string mismatch")
+        _require(args.final_confirm == FINAL_CONFIRM_STRING, "FINAL_CONFIRM_MISMATCH", "final confirm mismatch")
+        _require(bool(args.allow_real_submit), "REAL_SUBMIT_REQUIRES_ALLOW_FLAG", "--allow-real-submit is required")
+    else:
+        # default dry-run
+        if not args.dry_run:
+            raise SystemExit("BLOCKED: CLI requires --dry-run unless --execute-real-submit is set")
+
+    # Wiring validation / submitter selection
+    submitter = None
+    if args.execute_real_submit:
+        try:
+            submitter = _build_real_guarded_submitter()
+        except Exception as e:
+            raise SystemExit(f"BLOCKED: real submitter wiring failed: {type(e).__name__}")
+    elif args.allow_real_submit:
+        # Wiring check only (still dry-run)
         _require(args.confirm == CONFIRM_STRING, "CONFIRM_MISMATCH", "confirm string mismatch")
         try:
             _ = _build_real_guarded_submitter()
         except Exception as e:
             raise SystemExit(f"BLOCKED: real submitter wiring failed: {type(e).__name__}")
 
-    # Dry-run uses a None submitter; we only validate guards.
+    # Dry-run validates guards and writes a final marker; real submit path will submit once.
     try:
         # validate only: will fail at SUBMITTER_NOT_CONFIGURED after lock unless we short-circuit.
         # For dry-run, we run all validations but skip submit and avoid creating lock.
@@ -461,8 +477,17 @@ def main() -> int:
         ok_sess, sess_reason = _default_check_session_regular_market()
         _require(bool(ok_sess), "SESSION_NOT_REGULAR", f"session not regular: {sess_reason}")
 
-        # Write a dry-run final file only (no lock/request/response)
         symbol = str(intent.get("symbol", ""))
+
+        if args.execute_real_submit:
+            # Real submit path: create full artifacts (lock/request/response/final)
+            _require(submitter is not None, "SUBMITTER_NOT_CONFIGURED", "submitter missing")
+            return_result = _submit_once(project_root, preview, str(args.correlation_id), submitter)
+            # Print final path for operator convenience (no secrets)
+            print(return_result.get("artifacts", {}).get("final", ""))
+            return 0 if bool(return_result.get("actual_order_submitted")) else 1
+
+        # Dry-run: final marker only (no lock/request/response)
         art = _artifacts(project_root, symbol, str(args.correlation_id))
         art.final_path.parent.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

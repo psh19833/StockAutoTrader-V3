@@ -225,12 +225,23 @@ def main() -> int:
         cache_path = default_cache_path()
         result["token_cache_path"] = str(cache_path)
         result["token_cache_path_exists"] = cache_path.expanduser().exists()
-        result["token_source"] = "MEMORY" if False else "NONE"  # updated after issue_token
+
+        tc = TokenCache(cache_path)
+        rec_before = tc.load()
+        cache_hit_before = bool(rec_before and tc.token_present(rec_before) and (tc.is_expired(rec_before) is False))
 
         provider = KisTokenProvider(app_key=app_key, app_secret=app_secret, base_url=base_url, transport=transport)
-        # cache-first provider (may return cached token without calling tokenP)
+        # cache-first provider (returns cached token when available; otherwise may call tokenP subject to 1-day guard)
         token = provider.issue_token(force_token_refresh=False)
 
+        if cache_hit_before:
+            result["tokenP_called"] = False
+            result["tokenP_skipped_reason"] = "CACHE_HIT_FILE_TOKEN_VALID"
+        else:
+            # We can't reliably tell whether tokenP was called without deeper instrumentation.
+            # Treat as unknown; still 1-day guard prevents repeated calls.
+            result["tokenP_called"] = True
+            result["tokenP_skipped_reason"] = ""
         # If we got here, token is available (either file cache or tokenP)
         result["token_issued"] = True
         # Don't use key name 'token' in http_status (redactor masks it). Use oauth_tokenp.
@@ -248,8 +259,7 @@ def main() -> int:
             # token may be newly issued (not persisted due to FS perms) or from memory
             result["token_present"] = True
             result["token_source"] = "TOKENP_OR_MEMORY"
-            result["token_expired"] = False
-
+            result["token_expired"] = "unknown"
         # record cache file permissions (bools only)
         perms = check_permissions(cache_path)
         # embed only booleans
