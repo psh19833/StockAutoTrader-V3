@@ -6,6 +6,7 @@ import pytest
 from scripts.live_pilot_submit_once import (
     CONFIRM_STRING,
     PilotGuardError,
+    _default_check_session_regular_market,
     guard_and_submit_once,
 )
 
@@ -64,6 +65,42 @@ def _session_ok():
 
 def _session_bad():
     return False, "SESSION_STATE_UNKNOWN"
+
+
+def test_default_session_checker_reuses_dashboard_regular_market(monkeypatch):
+    import dashboard.dashboard_routes as dashboard_routes
+
+    monkeypatch.setattr(
+        dashboard_routes,
+        "handle_get_session",
+        lambda: {
+            "session_state": "REGULAR_MARKET",
+            "reason": "session_source=KST_TIME_WITH_REST_VERIFIED",
+            "detail": "verified readonly source",
+        },
+    )
+
+    ok, reason = _default_check_session_regular_market()
+    assert ok is True
+    assert reason == "session_source=KST_TIME_WITH_REST_VERIFIED"
+
+
+def test_default_session_checker_fails_closed_on_unknown(monkeypatch):
+    import dashboard.dashboard_routes as dashboard_routes
+
+    monkeypatch.setattr(
+        dashboard_routes,
+        "handle_get_session",
+        lambda: {
+            "session_state": "UNKNOWN",
+            "reason": "session_source_unavailable",
+            "detail": "시장세션 데이터 소스 미연결",
+        },
+    )
+
+    ok, reason = _default_check_session_regular_market()
+    assert ok is False
+    assert reason == "session_source_unavailable"
 
 
 @pytest.fixture

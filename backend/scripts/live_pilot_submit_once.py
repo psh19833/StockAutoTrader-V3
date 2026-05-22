@@ -131,60 +131,27 @@ def _is_emergency_stop_active(project_root: Path) -> bool:
 # ── Session check (read-only, injectable) ────────────────────────────────────
 
 def _default_check_session_regular_market() -> tuple[bool, str]:
-    """Return (ok, reason). Must not use order endpoints.
+    """Return (ok, reason) using the verified dashboard session path.
 
-    Implementation: uses TradingCalendar+MarketClock with KIS schedule API client if available.
-    If API is not connected/available -> BLOCK (fail-closed).
-
-    Tests should override this checker.
+    Reuses the same read-only session classifier that powers
+    dashboard/session and returns REGULAR_MARKET only when that path does.
+    Fail-closed for UNKNOWN / holiday / after-hours / any lookup error.
     """
     try:
-        # Local imports to keep script import-light.
-        from session.trading_calendar import TradingCalendar
-        from session.market_clock import MarketClock
-        from kis.market_schedule_api import MarketScheduleApi
-        from kis.transport import RealTransport
+        from dashboard.dashboard_routes import handle_get_session
 
-        base_url = str(os.getenv("KIS_BASE_URL", "") or "").strip()
-        if not base_url:
-            return False, "KIS_BASE_URL missing"
+        session = handle_get_session() or {}
+        state = str(session.get("session_state", "") or "").upper()
+        reason = str(session.get("reason", "") or "").strip()
+        detail = str(session.get("detail", "") or "").strip()
 
-        # Read-only: holiday/status endpoints are GET.
-        transport = RealTransport(base_url=base_url, timeout=8)
-        api = MarketScheduleApi(transport=transport)
+        if state == "REGULAR_MARKET":
+            return True, reason or detail or "REGULAR_MARKET"
 
-        # The MarketScheduleApi returns list[str] like YYYYMMDD.
-        def _fetch_holidays() -> tuple[datetime.date, ...]:  # type: ignore[name-defined]
-            from datetime import date as dt_date
-            items = api.get_holidays() or []
-            out = []
-            for s in items:
-                try:
-                    if len(str(s)) == 8:
-                        y = int(str(s)[0:4]); m = int(str(s)[4:6]); d = int(str(s)[6:8])
-                        out.append(dt_date(y, m, d))
-                except Exception:
-                    continue
-            return tuple(out)
+        if not state:
+            return False, "session_source_unavailable"
 
-        def _fetch_market_status() -> str:
-            ms = api.get_market_status() or {}
-            # Normalize to MarketClock.map_kis_status short forms.
-            v = str(ms.get("market_status", "unknown") or "unknown").upper()
-            if v in {"OPEN", "STATUS_OPEN"}:
-                return "OPEN"
-            if v in {"CLOSE", "STATUS_CLOSE"}:
-                return "CLOSE"
-            if v in {"PREOPEN", "STATUS_PREOPEN"}:
-                return "PREOPEN"
-            return v
-
-        cal = TradingCalendar(fetch_holidays_fn=_fetch_holidays)
-        snap = cal.check_today()
-        clk = MarketClock(fetch_market_status_fn=_fetch_market_status)
-        sess = clk.evaluate(snap)
-        ok = str(sess.session_state.value) == "REGULAR_MARKET"
-        return ok, sess.reason or str(sess.session_state.value)
+        return False, reason or detail or state
     except Exception as e:
         return False, f"session_check_error:{type(e).__name__}"
 
