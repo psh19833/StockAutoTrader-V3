@@ -8,8 +8,10 @@ from typing import Optional, Protocol
 from safety.live_order_safety_gate import SafetyGateResult
 from kis.token_provider import KisTokenProvider
 
-BUY_TR_ID = "TTTC0012U"
-SELL_TR_ID = "TTTC0011U"
+# KIS endpoint catalog / real order TR IDs.
+# Keep these aligned with backend/kis/endpoints.py.
+BUY_TR_ID = "TTTC0802U"
+SELL_TR_ID = "TTTC0801U"
 
 
 class OrderSubmitResult:

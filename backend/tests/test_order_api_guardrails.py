@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kis.order_api import OrderSubmitResult, submit_cash_order
+from kis.order_api import OrderSubmitResult, build_cash_order_payload, submit_cash_order
 from safety.live_order_safety_gate import SafetyGateResult
 
 
@@ -140,6 +140,22 @@ def test_live_account_mismatch_blocked(monkeypatch):
     )
     assert r.success is False
     assert r.error_type == "ACCOUNT_MISMATCH"
+
+
+def test_build_cash_order_payload_normalizes_account_fields():
+    payload = build_cash_order_payload(
+        symbol="005930",
+        side="BUY",
+        qty=1,
+        price=0,
+        order_type="MARKET",
+        account_no="12345678-01",
+        account_product_code="01",
+    )
+    assert payload["CANO"] == "12345678"
+    assert len(payload["CANO"]) == 8
+    assert payload["ACNT_PRDT_CD"] == "01"
+    assert len(payload["ACNT_PRDT_CD"]) == 2
 
 
 def test_live_missing_correlation_id_blocked(monkeypatch):

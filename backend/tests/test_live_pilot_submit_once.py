@@ -17,6 +17,8 @@ class MockSubmitter:
         self.success = success
         self.order_number = order_number
         self.message = message
+        self.last_payload = None
+        self.last_tr_id = None
 
     class Resp:
         def __init__(self, success, order_number, message):
@@ -27,6 +29,8 @@ class MockSubmitter:
 
     def submit_cash_order(self, payload, tr_id):
         self.calls += 1
+        self.last_payload = payload
+        self.last_tr_id = tr_id
         return MockSubmitter.Resp(self.success, self.order_number, self.message)
 
 
@@ -350,6 +354,41 @@ def test_success_calls_submit_once_and_writes_files(project_root, tmp_path):
     req = Path(art["request"]).read_text(encoding="utf-8")
     assert "44413716" not in req
     assert "[REDACTED]" in req
+
+
+def test_real_submit_rebuilds_account_fields_from_env(project_root, tmp_path, monkeypatch):
+    monkeypatch.setenv("KIS_ACCOUNT_NO", "12345678")
+    monkeypatch.setenv("KIS_ACCOUNT_PRODUCT_CODE", "01")
+    preview = _write_preview(
+        tmp_path,
+        overrides={
+            "kis_payload_preview": {
+                "PDNO": "005930",
+                "ORD_DVSN": "01",
+                "ORD_QTY": "1",
+                "ORD_UNPR": "0",
+                "CANO": "",
+                "ACNT_PRDT_CD": "",
+            }
+        },
+    )
+    sub = MockSubmitter(success=False, order_number="", message="REJECT")
+    out = guard_and_submit_once(
+        project_root=project_root,
+        preview_json_path=preview,
+        confirm=CONFIRM_STRING,
+        correlation_id="c_real_account",
+        submitter=sub,
+        allow_real_submit=True,
+        session_checker=_session_ok,
+    )
+    assert sub.calls == 1
+    assert sub.last_tr_id == "TTTC0802U"
+    assert sub.last_payload["CANO"] == "12345678"
+    assert len(sub.last_payload["CANO"]) == 8
+    assert sub.last_payload["ACNT_PRDT_CD"] == "01"
+    assert len(sub.last_payload["ACNT_PRDT_CD"]) == 2
+    assert out["status"] == "REJECTED"
 
 
 def test_failure_writes_error_final(project_root, tmp_path):
