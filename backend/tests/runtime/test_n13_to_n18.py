@@ -65,14 +65,14 @@ class TestOrderAPI:
     def test_order_endpoint_exists(self):
         """Verify order endpoint structure is defined."""
         from kis.order_api import BUY_TR_ID, SELL_TR_ID
-        assert BUY_TR_ID == "TTTC0012U"
-        assert SELL_TR_ID == "TTTC0011U"
+        assert BUY_TR_ID == "TTTC0802U"
+        assert SELL_TR_ID == "TTTC0801U"
 
     def test_tr_ids_defined(self):
-        buy_tr = "TTTC0012U"
-        sell_tr = "TTTC0011U"
-        assert buy_tr == "TTTC0012U"
-        assert sell_tr == "TTTC0011U"
+        buy_tr = "TTTC0802U"
+        sell_tr = "TTTC0801U"
+        assert buy_tr == "TTTC0802U"
+        assert sell_tr == "TTTC0801U"
 
     def test_no_live_calls(self):
         """Order API must not make live calls in tests."""

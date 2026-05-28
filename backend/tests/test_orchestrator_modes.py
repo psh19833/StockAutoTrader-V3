@@ -40,6 +40,10 @@ def test_orchestrator_live_mode_blocks_when_runner_enabled_but_readiness_false(m
 
 def test_orchestrator_live_mode_exposes_live_zero_counts_and_synthetic_audit_when_ready(monkeypatch):
     monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+    monkeypatch.setattr(
+        "runtime.orchestrator.maybe_create_kis_rest_provider",
+        lambda: (None, {"configured": False, "reason": "test_isolation"}),
+    )
     orch = Orchestrator(live_readiness_provider=lambda: (True, []))
 
     result = orch.tick(SessionState.REGULAR_MARKET, mode="live")

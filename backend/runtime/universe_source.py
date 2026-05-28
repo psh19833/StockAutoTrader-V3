@@ -15,6 +15,10 @@ class UniverseFetchResult:
     used_symbol_count: int | None = None
     error_type: str | None = None
     error_reason: str | None = None
+    http_status: int | None = None
+    rt_cd: str | None = None
+    msg_cd: str | None = None
+    msg1: str | None = None
     fallback_used: bool = False
 
 
@@ -92,7 +96,15 @@ def fetch_universe_from_kis_volume_top(
                 source="kis_volume_top",
                 top_n=top_n,
                 error_type=str(resp.get("error_type") if isinstance(resp, dict) else None) or "DataUnavailable",
-                error_reason=str(resp.get("reason_code") if isinstance(resp, dict) else None) or "volume_top_unavailable",
+                error_reason=(
+                    str(resp.get("reason_code") if isinstance(resp, dict) else None)
+                    or str(resp.get("reason_text") if isinstance(resp, dict) else None)
+                    or "volume_top_unavailable"
+                ),
+                http_status=resp.get("http_status") if isinstance(resp, dict) else None,
+                rt_cd=str(resp.get("rt_cd") if isinstance(resp, dict) else None) if isinstance(resp, dict) else None,
+                msg_cd=str(resp.get("msg_cd") if isinstance(resp, dict) else None) if isinstance(resp, dict) else None,
+                msg1=str(resp.get("msg1") if isinstance(resp, dict) else None) if isinstance(resp, dict) else None,
             )
         raw = resp.get("raw") if isinstance(resp, dict) else None
 
@@ -113,6 +125,10 @@ def fetch_universe_from_kis_volume_top(
             raw_row_count=raw_rows,
             parsed_symbol_count=len(parsed),
             used_symbol_count=len(used),
+            http_status=resp.get("http_status") if isinstance(resp, dict) else None,
+            rt_cd=str(resp.get("rt_cd") if isinstance(resp, dict) else None) if isinstance(resp, dict) else None,
+            msg_cd=str(resp.get("msg_cd") if isinstance(resp, dict) else None) if isinstance(resp, dict) else None,
+            msg1=str(resp.get("msg1") if isinstance(resp, dict) else None) if isinstance(resp, dict) else None,
         )
     except Exception as e:
         return UniverseFetchResult(

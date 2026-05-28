@@ -180,6 +180,8 @@ def test_runtime_tick_live_exposes_pipeline_summary_when_ready(monkeypatch):
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
+    import runtime.orchestrator as orchestrator_mod
+    monkeypatch.setattr(orchestrator_mod, "maybe_create_kis_rest_provider", lambda: (None, {"configured": False, "reason": "test_isolation"}))
     monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "REGULAR_MARKET"}))
 
     tick = _run(main.runtime_tick(mode="live", session="REGULAR_MARKET"))

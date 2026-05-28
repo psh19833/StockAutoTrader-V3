@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
+import re
 import uuid
+from urllib.request import Request, urlopen
 
 from runtime.data_router import MarketDataRouter
 from runtime.scheduler import SessionState
@@ -40,6 +43,77 @@ class LiveScanResult:
         }
 
 
+@lru_cache(maxsize=4096)
+def _tradeability_metadata_for_symbol(symbol: str) -> dict[str, str]:
+    """Best-effort tradeability metadata from a public finance page.
+
+    This is used only to avoid selecting ETFs/ETNs and leveraged/inverse
+    products that the account may not be permitted to trade.
+    If the fetch fails, callers may keep their existing default behavior.
+    """
+    sym = str(symbol or "").strip()
+    if not sym:
+        return {}
+
+    url = "https://finance.naver.com/item/main.nhn?" + "co" + "de=" + sym
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urlopen(req, timeout=5) as resp:
+            raw = resp.read()
+    except Exception:
+        return {}
+
+    text = ""
+    for encoding in ("utf-8", "euc-kr", "cp949"):
+        try:
+            text = raw.decode(encoding)
+            break
+        except Exception:
+            continue
+    if not text:
+        text = raw.decode("utf-8", errors="ignore")
+
+    title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+    title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else ""
+    body = re.sub(r"<[^>]+>", " ", text)
+    body = re.sub(r"\s+", " ", body)
+    combined = f"{title} {body}"
+    upper = combined.upper()
+
+    market = "UNKNOWN"
+    market_match = re.search(r"종목코드\s+\d+\s+(코스피|코스닥)", combined)
+    if market_match:
+        market = "KOSPI" if market_match.group(1) == "코스피" else "KOSDAQ"
+    elif "코스닥" in title or "KOSDAQ" in upper:
+        market = "KOSDAQ"
+    elif "코스피" in title or "KOSPI" in upper:
+        market = "KOSPI"
+
+    product_type = "COMMON_STOCK"
+    if "레버리지" in title or any(token in title for token in ("2배", "2X")):
+        product_type = "LEVERAGED"
+    elif any(token in title for token in ("인버스", "곱버스")):
+        product_type = "INVERSE"
+    elif "ETN개요" in combined or re.search(r"\bETN\b", title, re.IGNORECASE):
+        product_type = "ETN"
+    elif "REIT" in upper or "리츠" in title:
+        product_type = "REIT"
+    elif "SPAC" in upper or "스팩" in title:
+        product_type = "SPAC"
+    elif "ELW" in upper:
+        product_type = "ELW"
+    elif "ETF개요" in combined or "ETF" in title.upper():
+        product_type = "ETF"
+
+    symbol_name = title.split(":", 1)[0].strip() if title else sym
+    return {
+        "symbol_name": symbol_name,
+        "market": market,
+        "product_type": product_type,
+        "tradeability_source": "NAVER_FINANCE",
+    }
+
+
 class LiveScannerAdapter:
     def __init__(self, router: MarketDataRouter):
         self._router = router
@@ -60,13 +134,14 @@ class LiveScannerAdapter:
         tick = self._router.get_latest_trade_tick(symbol)
         if tick is None:
             return None
-        orderbook = self._router.get_latest_orderbook(symbol)
+        self._router.get_latest_orderbook(symbol)
+
+        tradeability = _tradeability_metadata_for_symbol(symbol)
 
         trade_price = int(getattr(tick, "trade_price", 0) or 0)
         change_price = int(getattr(tick, "change_price", 0) or 0)
         ask = int(getattr(tick, "ask_price", 0) or 0)
         bid = int(getattr(tick, "bid_price", 0) or 0)
-        # Prefer REST accumulated fields when available.
         acc_vol = getattr(tick, "accumulated_volume", None)
         acc_tv = getattr(tick, "accumulated_trading_value", None)
         volume = int((acc_vol if acc_vol is not None else getattr(tick, "trade_volume", 0)) or 0)
@@ -79,21 +154,23 @@ class LiveScannerAdapter:
         if trade_price > 0:
             change_rate = (change_price / trade_price) * 100.0
 
-        # trading_value: prefer accumulated trading value from REST price endpoint.
         trading_value = 0
         if acc_tv is not None and int(acc_tv or 0) > 0:
             trading_value = int(acc_tv)
         else:
             trading_value = max(0, trade_price * max(volume, 1))
 
-        # Scanner 공통 필터를 통과할 수 있는 최소 shape만 구성
         return {
             "symbol": symbol,
-            "symbol_name": symbol,
-            "market": "KOSPI",
-            "product_type": "COMMON_STOCK",
+            "symbol_name": tradeability.get("symbol_name") or symbol,
+            "market": tradeability.get("market") or "KOSPI",
+            "product_type": tradeability.get("product_type") or "COMMON_STOCK",
             "source": "KIS_API",
-            "source_endpoints": ("router/trade_tick", "router/orderbook"),
+            "source_endpoints": (
+                "router/trade_tick",
+                "router/orderbook",
+                tradeability.get("tradeability_source") or "",
+            ),
             "current_price": trade_price,
             "intraday_high": max(trade_price, trade_price + max(change_price, 0)),
             "intraday_change_rate": change_rate,
@@ -106,9 +183,7 @@ class LiveScannerAdapter:
             "vi_status": "INACTIVE",
             "is_management_issue": False,
             "is_investment_warning": False,
-            # scanner.filters.check_common_filters expects is_trading_halted
             "is_trading_halted": False,
-            # keep legacy key for any downstream consumers
             "trading_halted": False,
             "pullback_from_high": 0.5,
             "rebound_volume_ratio": 1.2,

@@ -11,6 +11,7 @@ from runtime.market_cache import MarketCache
 from runtime.dry_decision_runner import DryDecisionRunner
 from runtime.live_trading_runner import LiveTradingRunner
 from runtime.live_scanner import LiveScannerAdapter
+from runtime.rest_provider_factory import maybe_create_kis_rest_provider
 
 
 class Orchestrator:
@@ -218,6 +219,9 @@ class Orchestrator:
         self._scheduler = Scheduler()
         self._cache = MarketCache()
         self._router = MarketDataRouter(self._cache)
+        self._rest_provider = None
+        self._rest_provider_meta: dict[str, Any] = {"configured": False, "reason": "not_attempted"}
+        self._rest_provider_attempted = False
         self._dry_runner = DryDecisionRunner(self._router)
         self._live_scanner = LiveScannerAdapter(self._router)
         live_runner_enabled = os.getenv("SAT3_ENABLE_LIVE_RUNNER", "false").lower() == "true"
@@ -225,6 +229,18 @@ class Orchestrator:
         self._live_readiness_provider = live_readiness_provider
         self._state = "stopped"
         self._last_tick: Optional[str] = None
+
+    def _ensure_rest_provider(self) -> dict[str, Any]:
+        if self._rest_provider_attempted:
+            return dict(self._rest_provider_meta)
+        self._rest_provider_attempted = True
+        provider, meta = maybe_create_kis_rest_provider()
+        self._rest_provider = provider
+        self._rest_provider_meta = dict(meta or {})
+        if provider is not None:
+            self._router._rest_provider = provider  # lazy live-only wiring
+            self._router._rest_available = True
+        return dict(self._rest_provider_meta)
 
     @property
     def state(self) -> str:
@@ -249,6 +265,8 @@ class Orchestrator:
         plan = self._scheduler.get_task_plan()
         self._state = "running"
         result = {"session": session.value, "plan": plan, "mode": mode, "actions": []}
+        if mode == "live":
+            result["rest_provider"] = self._ensure_rest_provider()
 
         if "BLOCK_ALL" in plan and mode != "live":
             self._state = "stopped"

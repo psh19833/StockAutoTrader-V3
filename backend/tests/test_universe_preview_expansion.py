@@ -4,7 +4,9 @@ import json
 
 from runtime.market_cache import MarketCache
 from runtime.data_router import MarketDataRouter
-from runtime.live_scanner import LiveScannerAdapter
+from runtime.live_scanner import LiveScannerAdapter, _tradeability_metadata_for_symbol
+from runtime.orchestrator import Orchestrator
+from runtime.scheduler import SessionState
 
 
 class FakeRestProvider:
@@ -97,8 +99,51 @@ def test_live_scanner_accepts_custom_symbols_list() -> None:
     assert res.status in ("READY", "WAITING_FOR_MARKET_DATA", "BLOCKED_ERROR")
 
 
+def test_live_scanner_excludes_leveraged_etf(monkeypatch) -> None:
+    import runtime.live_scanner as live_scanner
+
+    monkeypatch.setattr(
+        live_scanner,
+        "_tradeability_metadata_for_symbol",
+        lambda symbol: {
+            "symbol_name": "KODEX 2차전지산업레버리지" if symbol == "462330" else symbol,
+            "market": "KOSPI",
+            "product_type": "LEVERAGED" if symbol == "462330" else "COMMON_STOCK",
+            "tradeability_source": "TEST",
+        },
+    )
+    router = MarketDataRouter(MarketCache(), rest_provider=FakeRestProvider(["462330", "005930"]))
+    scanner = LiveScannerAdapter(router)
+    res = scanner.run_live_scan(session="REGULAR_MARKET", symbols=["462330", "005930"])
+    symbols = {c["symbol"] for c in res.candidates}
+    assert "462330" not in symbols
+
+
 def test_universe_source_parser_extracts_symbols() -> None:
     from runtime.universe_source import parse_symbols_from_rank_payload
 
     payload = {"output": [{"mksc_shrn_iscd": "005930"}, {"mksc_shrn_iscd": "000660"}]}
     assert parse_symbols_from_rank_payload(payload) == ["005930", "000660"]
+
+
+def test_orchestrator_live_mode_uses_rest_provider_when_available(monkeypatch) -> None:
+    import runtime.orchestrator as orchestrator_mod
+
+    monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+    monkeypatch.setattr(
+        orchestrator_mod,
+        "maybe_create_kis_rest_provider",
+        lambda: (FakeRestProvider(["005930", "000660", "035720"]), {"configured": True, "provider_type": "FakeRestProvider"}),
+    )
+
+    orch = Orchestrator(live_readiness_provider=lambda: (True, []))
+    result = orch.tick(SessionState.REGULAR_MARKET, mode="live")
+    live = result.get("live") or {}
+    pipeline = live.get("pipeline") or {}
+
+    assert result.get("rest_provider", {}).get("configured") is True
+    assert live.get("status") == "LIVE_PIPELINE_TICK_EXECUTED"
+    assert pipeline.get("scanner_status") == "READY"
+    assert pipeline.get("live_pipeline_reason") == "LIVE_SCANNER_OK"
+    assert pipeline.get("live_scan", {}).get("status") == "READY"
+    assert pipeline.get("live_scan", {}).get("reason") == "LIVE_SCANNER_OK"

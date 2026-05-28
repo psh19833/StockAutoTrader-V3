@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from kis.auth import KisToken
 from kis.auth_headers import build_kis_auth_headers, validate_prod_vps_alignment
 from kis.transport import KisTransport, StubTransport
-from kis.token_cache import TokenCache
+from kis.token_cache import TokenCache, app_key_fingerprint, base_url_hash
 
 
 class TokenIssueError(Exception):
@@ -59,15 +59,27 @@ class KisTokenProvider:
         cache = TokenCache()
         rec = cache.load()
         if rec and cache.token_present(rec) and (cache.is_expired(rec) is False):
-            token = KisToken(
-                access_token=rec.access_token,
-                token_type=(rec.token_type or "Bearer"),
-                expires_in=max(0, int(rec.expires_at_epoch) - int(datetime.now(timezone.utc).timestamp())),
-                issued_at=datetime.fromtimestamp(int(rec.issued_at_epoch), tz=timezone.utc),
-            )
-            self._cached_token = token
-            self._last_diagnostic = None
-            return token
+            # Reuse only if the cache entry matches the current credentials.
+            # This avoids cross-test / cross-account contamination from an
+            # existing local token cache file.
+            if (
+                rec.base_url_hash == base_url_hash(self._base_url) and
+                rec.app_key_fingerprint == app_key_fingerprint(self._app_key)
+            ):
+                # Reconstruct a mathematically consistent KisToken from the cached
+                # absolute timestamps. Do NOT use remaining seconds as expires_in,
+                # because KisToken.expires_at = issued_at + expires_in.
+                # Using remaining seconds would make expires_at fall in the past.
+                expires_in = max(0, int(rec.expires_at_epoch) - int(rec.issued_at_epoch))
+                token = KisToken(
+                    access_token=rec.access_token,
+                    token_type=(rec.token_type or "Bearer"),
+                    expires_in=expires_in,
+                    issued_at=datetime.fromtimestamp(int(rec.issued_at_epoch), tz=timezone.utc),
+                )
+                self._cached_token = token
+                self._last_diagnostic = None
+                return token
 
         # 2) KST 1-day guard: if we already attempted tokenP today, do not retry unless forced.
         if (not force_token_refresh) and cache.kst_attempted_today(rec) and (

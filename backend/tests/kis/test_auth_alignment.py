@@ -12,6 +12,32 @@ from kis.transport import StubTransport
 from kis.ws_approval import WsApprovalKey
 
 
+@pytest.fixture(autouse=True)
+def _isolate_token_cache(monkeypatch):
+    import kis.token_provider as token_provider_mod
+
+    class _EmptyTokenCache:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def load(self):
+            return None
+
+        def token_present(self, rec):
+            return False
+
+        def is_expired(self, rec):
+            return False
+
+        def kst_attempted_today(self, rec):
+            return False
+
+        def record_tokenp_attempt(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(token_provider_mod, "TokenCache", _EmptyTokenCache)
+
+
 def _credentials() -> KisCredentials:
     return KisCredentials(
         app_key="PSAPPKEY1234567890ABCDEF",

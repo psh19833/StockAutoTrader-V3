@@ -7,6 +7,32 @@ from kis.transport import KisTransport, StubTransport, TransportResponse
 from kis.token_provider import KisTokenProvider
 
 
+@pytest.fixture(autouse=True)
+def _isolate_token_cache(monkeypatch):
+    import kis.token_provider as token_provider_mod
+
+    class _EmptyTokenCache:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def load(self):
+            return None
+
+        def token_present(self, rec):
+            return False
+
+        def is_expired(self, rec):
+            return False
+
+        def kst_attempted_today(self, rec):
+            return False
+
+        def record_tokenp_attempt(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(token_provider_mod, "TokenCache", _EmptyTokenCache)
+
+
 class TestKisCredentials:
     def test_create(self):
         creds = KisCredentials(

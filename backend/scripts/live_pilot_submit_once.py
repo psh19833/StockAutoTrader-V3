@@ -23,10 +23,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from audit_logging.audit_event import AuditEvent
+from audit_logging.audit_repo_bridge import save_audit_event
+from kis.order_api import build_cash_order_payload
+from storage.database import init_db
+from storage.sqlite_repositories import SqliteAuditEventRepository
 
 
 CONFIRM_STRING = "CONFIRM_LIVE_PILOT_SUBMIT_ONCE"
@@ -179,6 +186,159 @@ def _artifacts(project_root: Path, symbol: str, correlation_id: str) -> SubmitAr
     )
 
 
+def _audit_db_path(project_root: Path) -> Path:
+    return project_root / "data" / "sat3_audit.db"
+
+
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _persist_operational_state(
+    *,
+    project_root: Path,
+    preview: dict[str, Any],
+    result: dict[str, Any],
+    ts: str,
+    request_artifact: str,
+    response_artifact: str,
+    final_artifact: str,
+) -> dict[str, Any]:
+    db_path = _audit_db_path(project_root)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+
+    try:
+        audit_repo = SqliteAuditEventRepository(conn)
+        risk = _safe_dict(preview.get("risk"))
+        strategy = _safe_dict(preview.get("strategy"))
+        scanner = _safe_dict(preview.get("scanner"))
+        order_number = str(result.get("kis_order_number", "") or "")
+        correlation_id = str(result.get("correlation_id", "") or "")
+        symbol = str(result.get("symbol", "") or "")
+        side = str(result.get("side", "") or "")
+        quantity = int(result.get("quantity", 0) or 0)
+        order_status = str(result.get("status", "") or "")
+        filled_qty = 0 if order_status == "SUBMITTED" else 0
+        filled_price = 0
+        remaining_qty = 1 if order_status == "SUBMITTED" else 0
+
+        payload = {
+            "order_number": order_number,
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "order_type": str(result.get("order_type", "") or ""),
+            "status": order_status,
+            "filled_qty": filled_qty,
+            "filled_price": filled_price,
+            "remaining_qty": remaining_qty,
+            "submitted_at": ts,
+            "source": "LIVE_PILOT_ONCE",
+            "risk_decision_summary": risk,
+            "strategy_summary": strategy,
+            "scanner_summary": scanner,
+            "artifacts": {
+                "request": request_artifact,
+                "response": response_artifact,
+                "final": final_artifact,
+            },
+        }
+        event_type = "ORDER_SUBMITTED" if order_status == "SUBMITTED" else "ORDER_REJECTED" if order_status == "REJECTED" else "ORDER_FAILED"
+        severity = "INFO" if order_status == "SUBMITTED" else "WARNING"
+        strategy_name = str(strategy.get("strategy_name") or strategy.get("name") or scanner.get("scanner_type") or "LIVE_PILOT_ONCE")
+        event = AuditEvent(
+            event_id=f"LP1-{order_number or correlation_id}",
+            event_type=event_type,
+            severity=severity,
+            correlation_id=correlation_id,
+            symbol=symbol,
+            strategy_name=strategy_name,
+            payload=payload,
+            source="LIVE_PILOT_ONCE",
+        )
+        save_audit_event(audit_repo, event)
+
+        risk_decision_id = correlation_id or f"LP1-{order_number}"
+        signal_id = str(strategy.get("signal_id") or scanner.get("signal_id") or correlation_id or "")
+        conn.execute(
+            "INSERT OR REPLACE INTO risk_decisions "
+            "(risk_decision_id, signal_id, correlation_id, symbol, side, allowed, reason_code, reason_text, market_regime, session_state) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                risk_decision_id,
+                signal_id,
+                correlation_id,
+                symbol,
+                side,
+                1 if bool(risk.get("allowed", order_status == "SUBMITTED")) else 0,
+                str(risk.get("reason_code") or risk.get("reason") or result.get("error_code") or ""),
+                str(risk.get("reason_text") or risk.get("summary") or result.get("final_result") or ""),
+                str(preview.get("market_regime") or risk.get("market_regime") or ""),
+                str(preview.get("session_state") or risk.get("session_state") or ""),
+            ),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO orders "
+            "(order_intent_id, risk_decision_id, symbol, side, status, quantity, estimated_amount) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                risk_decision_id,
+                risk_decision_id,
+                symbol,
+                side,
+                order_status,
+                quantity,
+                int(preview.get("order_intent", {}).get("estimated_amount", 0) or 0) if isinstance(preview.get("order_intent"), dict) else 0,
+            ),
+        )
+        if order_status == "SUBMITTED":
+            conn.execute(
+                "INSERT OR REPLACE INTO fills "
+                "(fill_id, order_intent_id, symbol, side, filled_qty, filled_price, remaining_qty) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    order_number or f"LP1-{correlation_id}",
+                    risk_decision_id,
+                    symbol,
+                    side,
+                    filled_qty,
+                    filled_price,
+                    remaining_qty,
+                ),
+            )
+
+        if scanner or preview.get("scan_run_id"):
+            scan_run_id = str(scanner.get("scan_run_id") or preview.get("scan_run_id") or f"LP1-{correlation_id}")
+            scanner_type = str(scanner.get("scanner_type") or scanner.get("name") or "LIVE_PILOT_ONCE")
+            collected_count = int(scanner.get("candidate_count", 1 if order_status == "SUBMITTED" else 0) or 0)
+            included_count = int(scanner.get("included_count", 1 if order_status == "SUBMITTED" else 0) or 0)
+            excluded_count = int(scanner.get("excluded_count", max(0, collected_count - included_count)) or 0)
+            conn.execute(
+                "INSERT OR REPLACE INTO scan_runs "
+                "(scan_run_id, scanner_type, market_regime, collected_count, included_count, excluded_count, started_at, completed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scan_run_id,
+                    scanner_type,
+                    str(preview.get("market_regime") or ""),
+                    collected_count,
+                    included_count,
+                    excluded_count,
+                    ts,
+                    ts,
+                ),
+            )
+
+        conn.commit()
+        return {"saved": True, "db_path": str(db_path)}
+    finally:
+        conn.close()
+
+
 def _load_preview_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise PilotGuardError("PREVIEW_JSON_MISSING", f"preview json not found: {path}")
@@ -194,6 +354,17 @@ def _load_preview_json(path: Path) -> dict[str, Any]:
 def _require(cond: bool, code: str, msg: str) -> None:
     if not cond:
         raise PilotGuardError(code, msg)
+
+
+def _resolve_account_parts_from_env() -> tuple[str, str]:
+    from kis.account_api import AccountApi
+
+    api = AccountApi(
+        account_no=os.getenv("KIS_ACCOUNT_NO", "") or None,
+        account_product_code=os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "") or None,
+    )
+    cano, prdt = api._get_account_parts()
+    return cano, prdt
 
 
 def guard_and_submit_once(
@@ -281,6 +452,25 @@ def guard_and_submit_once(
     # Write lock BEFORE submit
     art.lock_path.write_text("locked\n", encoding="utf-8")
 
+    submit_payload = dict(payload)
+    if allow_real_submit:
+        cano, prdt = _resolve_account_parts_from_env()
+        preview_cano = str(payload.get("CANO", "") or "")
+        preview_prdt = str(payload.get("ACNT_PRDT_CD", "") or "")
+        if preview_cano and preview_cano != cano:
+            raise PilotGuardError("CANO_MISMATCH", "preview CANO does not match configured account")
+        if preview_prdt and preview_prdt != prdt:
+            raise PilotGuardError("ACNT_PRDT_CD_MISMATCH", "preview ACNT_PRDT_CD does not match configured account")
+        submit_payload = build_cash_order_payload(
+            symbol=symbol,
+            side=side,
+            qty=qty_i,
+            price=int(intent.get("price", 0) or 0),
+            order_type=order_type,
+            account_no=cano,
+            account_product_code=prdt,
+        )
+
     ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     request_redacted = _redact({
         "timestamp": ts,
@@ -289,7 +479,7 @@ def guard_and_submit_once(
         "side": side,
         "quantity": 1,
         "order_type": order_type,
-        "kis_payload_preview": payload,
+        "kis_payload_preview": submit_payload,
     })
     art.request_path.write_text(json.dumps(request_redacted, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -321,9 +511,9 @@ def guard_and_submit_once(
 
         resp_obj = None
         if hasattr(submitter, "submit_cash_order"):
-            resp_obj = submitter.submit_cash_order(payload=payload, tr_id=BUY_TR_ID)
+            resp_obj = submitter.submit_cash_order(payload=submit_payload, tr_id=BUY_TR_ID)
         elif hasattr(submitter, "submit"):
-            resp_obj = submitter.submit(payload)
+            resp_obj = submitter.submit(submit_payload)
         else:
             raise PilotGuardError("SUBMITTER_INVALID", "submitter missing submit_cash_order/submit")
 
@@ -350,6 +540,21 @@ def guard_and_submit_once(
             f"timestamp={ts}\nstatus={result['status']}\norder_number={order_no}\nmessage={result['final_result']}\n",
             encoding="utf-8",
         )
+        try:
+            persist_state = _persist_operational_state(
+                project_root=project_root,
+                preview=preview,
+                result=result,
+                ts=ts,
+                request_artifact=str(art.request_path),
+                response_artifact=str(art.response_path),
+                final_artifact=str(art.final_path),
+            )
+            result["audit_db_saved"] = bool(persist_state.get("saved", False))
+            result["audit_db_path"] = str(persist_state.get("db_path", ""))
+        except Exception as persist_error:
+            result["audit_db_saved"] = False
+            result["audit_db_error"] = f"{type(persist_error).__name__}"
         return result
 
     except PilotGuardError as e:
@@ -360,6 +565,21 @@ def guard_and_submit_once(
         result["final_result"] = "ERROR"
         art.response_path.write_text(json.dumps(_redact({"error": str(e)}), ensure_ascii=False, indent=2), encoding="utf-8")
         art.final_path.write_text(f"timestamp={ts}\nstatus=ERROR\nerror_code={e.code}\nerror_message={e.message}\n", encoding="utf-8")
+        try:
+            persist_state = _persist_operational_state(
+                project_root=project_root,
+                preview=preview,
+                result=result,
+                ts=ts,
+                request_artifact=str(art.request_path),
+                response_artifact=str(art.response_path),
+                final_artifact=str(art.final_path),
+            )
+            result["audit_db_saved"] = bool(persist_state.get("saved", False))
+            result["audit_db_path"] = str(persist_state.get("db_path", ""))
+        except Exception as persist_error:
+            result["audit_db_saved"] = False
+            result["audit_db_error"] = f"{type(persist_error).__name__}"
         return result
 
     except Exception as e:
@@ -370,6 +590,21 @@ def guard_and_submit_once(
         result["final_result"] = "ERROR"
         art.response_path.write_text(json.dumps(_redact({"error": f"{type(e).__name__}"}), ensure_ascii=False, indent=2), encoding="utf-8")
         art.final_path.write_text(f"timestamp={ts}\nstatus=ERROR\nerror_code=UNEXPECTED_EXCEPTION\nerror_message={type(e).__name__}\n", encoding="utf-8")
+        try:
+            persist_state = _persist_operational_state(
+                project_root=project_root,
+                preview=preview,
+                result=result,
+                ts=ts,
+                request_artifact=str(art.request_path),
+                response_artifact=str(art.response_path),
+                final_artifact=str(art.final_path),
+            )
+            result["audit_db_saved"] = bool(persist_state.get("saved", False))
+            result["audit_db_path"] = str(persist_state.get("db_path", ""))
+        except Exception as persist_error:
+            result["audit_db_saved"] = False
+            result["audit_db_error"] = f"{type(persist_error).__name__}"
         return result
 
 
@@ -449,7 +684,14 @@ def main() -> int:
         if args.execute_real_submit:
             # Real submit path: create full artifacts (lock/request/response/final)
             _require(submitter is not None, "SUBMITTER_NOT_CONFIGURED", "submitter missing")
-            return_result = _submit_once(project_root, preview, str(args.correlation_id), submitter)
+            return_result = guard_and_submit_once(
+                project_root=project_root,
+                preview_json_path=preview_path,
+                confirm=args.confirm,
+                correlation_id=str(args.correlation_id),
+                submitter=submitter,
+                allow_real_submit=True,
+            )
             # Print final path for operator convenience (no secrets)
             print(return_result.get("artifacts", {}).get("final", ""))
             return 0 if bool(return_result.get("actual_order_submitted")) else 1

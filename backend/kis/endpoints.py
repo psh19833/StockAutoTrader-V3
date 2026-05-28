@@ -96,7 +96,7 @@ _ENDPOINT_DEFS: list[tuple] = [
     ("inquire_financial_ratio", EndpointCategory.STOCK_INFO, "/uapi/domestic-stock/v1/quotations/inquire-financial-ratio", "GET", "FHKST66410000", True, False, "재무 비율 조회"),
 
     # ── 시세분석 ──
-    ("inquire_trading_volume", EndpointCategory.MARKET_ANALYSIS, "/uapi/domestic-stock/v1/quotations/inquire-volume-top", "GET", "FHPST01710000", True, False, "거래량 순위"),
+    ("inquire_trading_volume", EndpointCategory.MARKET_ANALYSIS, "/uapi/domestic-stock/v1/quotations/volume-rank", "GET", "FHPST01710000", True, False, "거래량 순위"),
     ("inquire_volatility", EndpointCategory.MARKET_ANALYSIS, "/uapi/domestic-stock/v1/quotations/inquire-price-volatility", "GET", "FHPST02100000", True, False, "변동성 완화장치 현황"),
 
     # ── 순위분석 ──

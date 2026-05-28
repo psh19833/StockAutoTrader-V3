@@ -5,7 +5,20 @@ from kis.transport import KisTransport, StubTransport
 _PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _ORDERBOOK_PATH = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
 _EXEC_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-ccnl"
-_VOLUME_TOP_PATH = "/uapi/domestic-stock/v1/quotations/inquire-volume-top"
+_VOLUME_TOP_PATH = "/uapi/domestic-stock/v1/quotations/volume-rank"
+_VOLUME_TOP_DEFAULT_PARAMS = {
+    "FID_COND_MRKT_DIV_CODE": "J",
+    "FID_COND_SCR_DIV_CODE": "20171",
+    "FID_INPUT_ISCD": "0000",
+    "FID_DIV_CLS_CODE": "0",
+    "FID_BLNG_CLS_CODE": "0",
+    "FID_TRGT_CLS_CODE": "111111111",
+    "FID_TRGT_EXLS_CLS_CODE": "0000000000",
+    "FID_INPUT_PRICE_1": "",
+    "FID_INPUT_PRICE_2": "",
+    "FID_VOL_CNT": "",
+    "FID_INPUT_DATE_1": "",
+}
 
 
 class MarketDataApi:
@@ -87,18 +100,64 @@ class MarketDataApi:
         endpoint: inquire_trading_volume
 
         NOTE:
-        - KIS 파라미터 스펙은 계정/권한/환경에 따라 달라질 수 있어, caller가 params를 주입할 수 있게 한다.
-        - 실패 시 data_available=False.
-        - raw payload 전체는 노출하지 않으며, 파싱은 상위 계층에서 안전하게 수행한다.
+        - KIS volume-rank endpoint returns a list under `output`.
+        - We return the raw payload so upstream parsers can extract symbols safely.
+        - Failure responses include http_status/rt_cd/msg_cd/msg1 for observability.
         """
-        out = self._get("inquire_trading_volume", _VOLUME_TOP_PATH, params=params or {})
-        if not out:
+        request_params = dict(_VOLUME_TOP_DEFAULT_PARAMS)
+        for key, value in (params or {}).items():
+            if value is not None:
+                request_params[key] = value
+
+        if self._client:
+            resp = self._client.get_json("inquire_trading_volume", params=request_params)
+        elif self._transport:
+            resp = self._transport.get_json(_VOLUME_TOP_PATH, params=request_params)
+        else:
             return {"data_available": False, "source": "KIS_API", "source_endpoints": ("kis/volume_top",)}
+
+        body = resp.body if isinstance(resp.body, dict) else {}
+        rt_cd = str(body.get("rt_cd", ""))
+        msg_cd = str(body.get("msg_cd", ""))
+        msg1 = str(body.get("msg1", ""))
+
+        if resp.status_code != 200:
+            return {
+                "data_available": False,
+                "source": "KIS_API",
+                "source_endpoints": ("kis/volume_top",),
+                "http_status": resp.status_code,
+                "rt_cd": rt_cd,
+                "msg_cd": msg_cd,
+                "msg1": msg1,
+                "error_type": "KIS_HTTP_ERROR",
+                "reason_code": msg_cd or "KIS_HTTP_ERROR",
+                "reason_text": msg1 or "KIS volume-top request failed",
+            }
+
+        if not body or rt_cd not in ("", "0"):
+            return {
+                "data_available": False,
+                "source": "KIS_API",
+                "source_endpoints": ("kis/volume_top",),
+                "http_status": resp.status_code,
+                "rt_cd": rt_cd,
+                "msg_cd": msg_cd,
+                "msg1": msg1,
+                "error_type": "KIS_API_ERROR",
+                "reason_code": msg_cd or body.get("reason_code") or "KIS_API_ERROR",
+                "reason_text": msg1 or body.get("reason_text") or "KIS volume-top returned an error",
+            }
+
         return {
             "data_available": True,
             "source": "KIS_API",
             "source_endpoints": ("kis/volume_top",),
-            "raw": out,
+            "raw": body,
+            "http_status": resp.status_code,
+            "rt_cd": rt_cd,
+            "msg_cd": msg_cd,
+            "msg1": msg1,
         }
 
 

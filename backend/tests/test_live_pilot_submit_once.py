@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -109,8 +110,9 @@ def test_default_session_checker_fails_closed_on_unknown(monkeypatch):
 
 @pytest.fixture
 def project_root(tmp_path, monkeypatch):
-    # Arrange a fake project root with logs/ and .emergency_stop absent.
+    # Arrange a fake project root with logs/ and data/ and .emergency_stop absent.
     (tmp_path / "logs").mkdir()
+    (tmp_path / "data").mkdir()
     return tmp_path
 
 
@@ -354,6 +356,47 @@ def test_success_calls_submit_once_and_writes_files(project_root, tmp_path):
     req = Path(art["request"]).read_text(encoding="utf-8")
     assert "44413716" not in req
     assert "[REDACTED]" in req
+
+
+def test_success_persists_operational_db_records(project_root, tmp_path):
+    preview = _write_preview(tmp_path, overrides={"scanner": {"scan_run_id": "scan_1", "scanner_type": "LIQUIDITY_MOMENTUM", "candidate_count": 1, "included_count": 1, "excluded_count": 0}})
+    sub = MockSubmitter(success=True, order_number="ODNO777", message="OK")
+    out = guard_and_submit_once(
+        project_root=project_root,
+        preview_json_path=preview,
+        confirm=CONFIRM_STRING,
+        correlation_id="c777",
+        submitter=sub,
+        session_checker=_session_ok,
+    )
+    assert out["status"] == "SUBMITTED"
+    assert out.get("audit_db_saved") is True
+    db_path = Path(out["audit_db_path"])
+    assert db_path.exists()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM risk_decisions").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM scan_runs").fetchone()[0] == 1
+        event = conn.execute("SELECT event_type, source, payload FROM audit_events LIMIT 1").fetchone()
+        assert event["event_type"] == "ORDER_SUBMITTED"
+        assert event["source"] == "LIVE_PILOT_ONCE"
+        payload = json.loads(event["payload"])
+        assert payload["order_number"] == "ODNO777"
+        assert payload["status"] == "SUBMITTED"
+        assert payload["remaining_qty"] == 1
+        order = conn.execute("SELECT status, quantity FROM orders LIMIT 1").fetchone()
+        assert order["status"] == "SUBMITTED"
+        assert order["quantity"] == 1
+        fill = conn.execute("SELECT filled_qty, remaining_qty FROM fills LIMIT 1").fetchone()
+        assert fill["filled_qty"] == 0
+        assert fill["remaining_qty"] == 1
+    finally:
+        conn.close()
 
 
 def test_real_submit_rebuilds_account_fields_from_env(project_root, tmp_path, monkeypatch):
