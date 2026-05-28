@@ -8,5 +8,9 @@ build/
 .venv/
 venv/
 *.db
+data/
+*_snapshot.json
+.env.*
+frontend/dist/
 logs/Zone.Identifier
 logs/
