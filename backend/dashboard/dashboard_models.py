@@ -186,6 +186,9 @@ class DataRouterStatusView:
 class TelegramStatusView:
     """Telegram 봇 연결 상태 (로컬 대시보드 — chat_id 전체 표시)."""
     connected: bool = False
+    probe_enabled: bool = False
+    status_label: str = ""
+    status_detail: str = ""
     bot_name: str = ""
     chat_id: str = ""
     last_message_at: str = ""

@@ -365,12 +365,24 @@ def handle_get_telegram_status() -> dict[str, Any]:
 
     explicit_probe = str(os.getenv("SAT3_DASHBOARD_TELEGRAM_PROBE", "false")).strip().lower() in {"1", "true", "yes", "on", "y"}
     if not explicit_probe:
-        return _to_dict(TelegramStatusView(connected=False, error="external_probe_disabled"))
+        return _to_dict(TelegramStatusView(
+            connected=False,
+            probe_enabled=False,
+            status_label="조회 비활성화",
+            status_detail="대시보드용 Telegram 외부 조회가 꺼져 있습니다.",
+            error="external_probe_disabled",
+        ))
     try:
         import urllib.request, json
         token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         if not token:
-            return _to_dict(TelegramStatusView(connected=False, error="TELEGRAM_BOT_TOKEN not set"))
+            return _to_dict(TelegramStatusView(
+                connected=False,
+                probe_enabled=True,
+                status_label="설정 누락",
+                status_detail="TELEGRAM_BOT_TOKEN 이 설정되어 있지 않습니다.",
+                error="TELEGRAM_BOT_TOKEN not set",
+            ))
         url = f"https://api.telegram.org/bot{token}/getMe"
         req = urllib.request.Request(url)
         resp = urllib.request.urlopen(req, timeout=5)
@@ -379,13 +391,28 @@ def handle_get_telegram_status() -> dict[str, Any]:
             bot = data["result"]
             return _to_dict(TelegramStatusView(
                 connected=True,
+                probe_enabled=True,
+                status_label="연결됨",
+                status_detail="Telegram getMe 확인 성공",
                 bot_name=f"@{bot.get('username', 'unknown')}",
                 chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
                 last_message_at="online",
             ))
-        return _to_dict(TelegramStatusView(connected=False, error=str(data)))
+        return _to_dict(TelegramStatusView(
+            connected=False,
+            probe_enabled=True,
+            status_label="연결 실패",
+            status_detail="Telegram API 응답이 ok가 아닙니다.",
+            error=str(data),
+        ))
     except Exception as e:
-        return _to_dict(TelegramStatusView(connected=False, error=str(e)))
+        return _to_dict(TelegramStatusView(
+            connected=False,
+            probe_enabled=True,
+            status_label="연결 실패",
+            status_detail="Telegram 상태 조회 중 예외가 발생했습니다.",
+            error=str(e),
+        ))
 
 
 def handle_get_kis_account() -> dict[str, Any]:

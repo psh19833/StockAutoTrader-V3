@@ -209,6 +209,19 @@ class TestDashboardServiceReadOnlyStatus:
         assert regime.allow_new_buy is False
 
 
+class TestTelegramStatusRoute:
+    def test_probe_disabled_is_reported_explicitly(self, monkeypatch):
+        import dashboard.dashboard_routes as routes
+
+        monkeypatch.delenv("SAT3_DASHBOARD_TELEGRAM_PROBE", raising=False)
+        payload = routes.handle_get_telegram_status()
+
+        assert payload["connected"] is False
+        assert payload["probe_enabled"] is False
+        assert payload["status_label"] == "조회 비활성화"
+        assert payload["error"] == "external_probe_disabled"
+
+
 class _DummyResponse:
     def __init__(self, status: int, payload: dict):
         self.status = status
@@ -231,6 +244,28 @@ class TestDashboardServiceTokenCache:
         monkeypatch.setenv("KIS_APP_KEY", "dummy_key")
         monkeypatch.setenv("KIS_APP_SECRET", "dummy_secret")
         monkeypatch.setenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
+        class _EmptyTokenCache:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def load(self):
+                return None
+
+            def token_present(self, rec):
+                return False
+
+            def is_expired(self, rec):
+                return False
+
+            def kst_attempted_today(self, rec):
+                return False
+
+            def record_tokenp_attempt(self, *args, **kwargs):
+                return None
+
+        import kis.token_provider as token_provider_mod
+        monkeypatch.setattr(token_provider_mod, "TokenCache", _EmptyTokenCache)
 
         call_counts = {"token": 0, "price": 0}
 

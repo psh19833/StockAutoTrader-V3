@@ -22,9 +22,9 @@ export default function DateTimeCard() {
   const kst = new Date(now.getTime() + 9 * 3600000);
   const dateStr = kst.toISOString().slice(0, 10);
   const timeStr = kst.toISOString().slice(11, 16);
-  const weekday = WEEKDAY[(kst.getUTCDay() + (kst.getUTCHours() >= 15 ? 1 : 0)) % 7];
+  const weekday = WEEKDAY[kst.getUTCDay()];
   const isHoliday = HOLIDAYS.includes(dateStr);
-  const isWeekend = [0, 6].includes(new Date(dateStr).getDay()); // 일=0, 토=6
+  const isWeekend = [0, 6].includes(kst.getUTCDay()); // 일=0, 토=6
   const isTradingDay = !isHoliday && !isWeekend;
 
   let session = ["장 마감", "CLOSED_AFTER_MARKET"];
