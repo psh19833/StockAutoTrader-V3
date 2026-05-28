@@ -2,7 +2,10 @@
 
 Entry point for uvicorn: uvicorn main:app --host 127.0.0.1 --port 8000
 """
+import json
 import os
+import re
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -60,6 +63,9 @@ _runtime_status: dict[str, object] = {
     "tick_count": 0,
     "live_start_block_reasons": [],
     "last_order_status": "",
+    "order_submit_enabled": False,
+    "order_submit_enabled_reason": "",
+    "order_submit_checks": {},
 }
 
 
@@ -141,6 +147,306 @@ def _get_telegram_target_readiness() -> tuple[bool, dict[str, object]]:
     }
 
 
+def _safe_load_json_dict(path: Path) -> dict[str, object] | None:
+    try:
+        if not path.is_file():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
+
+
+def _artifact_int(value: object, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        raw = str(value).replace(",", "").strip()
+        return int(float(raw or default))
+    except Exception:
+        return default
+
+
+def _artifact_bool(value: object | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
+def _parse_submit_artifact(path: Path) -> dict[str, object] | None:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return None
+
+    kv: dict[str, str] = {}
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        kv[key.strip()] = value.strip()
+
+    status = str(kv.get("status", "") or "").upper()
+    if status != "SUBMITTED":
+        return None
+
+    order_number = str(kv.get("order_number", "") or "")
+    symbol = ""
+    m = re.search(r"live_pilot_submit_once_\d{8}_(\d{6})_", path.name)
+    if m:
+        symbol = m.group(1)
+
+    return {
+        "path": str(path),
+        "mtime": path.stat().st_mtime if path.exists() else 0.0,
+        "status": status,
+        "order_number": order_number,
+        "symbol": symbol,
+        "filled_qty": _artifact_int(kv.get("filled_qty", 0), 0),
+        "remaining_qty": _artifact_int(kv.get("remaining_qty", 1), 1),
+    }
+
+
+def _parse_reconciliation_artifact(data: dict[str, object], *, order_number: str = "", symbol: str = "") -> dict[str, object] | None:
+    artifact_order = str(
+        data.get("order_no") or data.get("order_number") or data.get("target_order_no") or ""
+    ).strip()
+    artifact_symbol = str(data.get("symbol") or "").strip()
+    if order_number and artifact_order and artifact_order != order_number:
+        return None
+    if symbol and artifact_symbol and artifact_symbol != symbol:
+        return None
+
+    before = data.get("before") if isinstance(data.get("before"), dict) else {}
+    after = data.get("after") if isinstance(data.get("after"), dict) else {}
+    cancel = data.get("cancel") if isinstance(data.get("cancel"), dict) else {}
+
+    after_status = str(after.get("status") or data.get("status") or before.get("status") or "").upper()
+    before_status = str(before.get("status") or "").upper()
+    status = after_status or before_status or str(data.get("status_field") or "").upper()
+
+    after_open = after.get("open")
+    open_flag = _artifact_bool(after_open if after_open is not None else data.get("open"))
+    remaining_qty = _artifact_int(after.get("remaining_qty", data.get("remaining_qty", before.get("remaining_qty", 0))), 0)
+    filled_qty = _artifact_int(after.get("filled_qty", data.get("filled_qty", before.get("filled_qty", 0))), 0)
+    blocker_cleared = _artifact_bool(data.get("blocker_cleared"))
+    cancel_attempted = _artifact_bool(cancel.get("attempted"))
+    has_definitive_closed = blocker_cleared or (
+        status in {"NOT_FOUND", "CANCELED", "CANCELLED", "FILLED", "FILL_CONFIRMED", "CLOSED", "REJECTED", "FAILED", "ERROR"}
+        and remaining_qty == 0
+        and not open_flag
+    )
+
+    if has_definitive_closed:
+        return {
+            "open": False,
+            "known": True,
+            "source": "reconciliation",
+            "status": status or "NOT_FOUND",
+            "order_number": artifact_order,
+            "symbol": artifact_symbol,
+            "filled_qty": filled_qty,
+            "remaining_qty": remaining_qty,
+            "reason": "RECONCILED_BY_READONLY",
+            "blocker": "",
+            "cancel_attempted": cancel_attempted,
+        }
+
+    if status or artifact_order or artifact_symbol or blocker_cleared or cancel_attempted:
+        if open_flag or remaining_qty > 0:
+            return {
+                "open": True,
+                "known": True,
+                "source": "reconciliation",
+                "status": status or "OPEN",
+                "order_number": artifact_order,
+                "symbol": artifact_symbol,
+                "filled_qty": filled_qty,
+                "remaining_qty": remaining_qty,
+                "reason": "READONLY_OPEN_ORDER",
+                "blocker": "OPEN_ORDER_PENDING",
+                "cancel_attempted": cancel_attempted,
+            }
+
+        return {
+            "open": False,
+            "known": False,
+            "source": "reconciliation",
+            "status": status or "UNKNOWN",
+            "order_number": artifact_order,
+            "symbol": artifact_symbol,
+            "filled_qty": filled_qty,
+            "remaining_qty": remaining_qty,
+            "reason": "READONLY_UNAVAILABLE",
+            "blocker": "READONLY_UNAVAILABLE",
+            "cancel_attempted": cancel_attempted,
+        }
+
+    return None
+
+
+def _latest_submit_evidence(project_root: Path) -> dict[str, object] | None:
+    logs_dir = project_root / "logs"
+    try:
+        candidates = sorted(
+            logs_dir.glob("live_pilot_submit_once_*_LIVE_PILOT_ONCE_final.txt"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception:
+        candidates = []
+
+    for final_path in candidates:
+        parsed = _parse_submit_artifact(final_path)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _latest_reconciliation_evidence(project_root: Path, *, order_number: str = "", symbol: str = "", not_before: float = 0.0) -> dict[str, object] | None:
+    logs_dir = project_root / "logs"
+    try:
+        candidates = sorted(
+            logs_dir.glob("order_cancel_*_final.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception:
+        candidates = []
+
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            continue
+        if not_before and mtime < not_before:
+            continue
+        data = _safe_load_json_dict(path)
+        if not data:
+            continue
+        parsed = _parse_reconciliation_artifact(data, order_number=order_number, symbol=symbol)
+        if parsed is None:
+            continue
+        parsed["path"] = str(path)
+        parsed["mtime"] = mtime
+        return parsed
+    return None
+
+
+def _live_pilot_open_order_state(project_root: Path) -> dict[str, object]:
+    """Detect whether the submit-once pilot still has an open/pending order.
+
+    Priority:
+    1) latest reconciliation artifact (read-only / cancel-check)
+    2) audit DB LIVE_PILOT_ONCE rows
+    3) submit artifact fallback
+    4) fail-closed when no definitive evidence exists
+    """
+    submit_evidence = _latest_submit_evidence(project_root)
+    submit_mtime = float(submit_evidence.get("mtime", 0.0) or 0.0) if submit_evidence else 0.0
+    target_order_number = str(submit_evidence.get("order_number", "") or "") if submit_evidence else ""
+    target_symbol = str(submit_evidence.get("symbol", "") or "") if submit_evidence else ""
+
+    db_path = project_root / "data" / "sat3_audit.db"
+    conn = None
+    audit_pending_state = None
+    if db_path.is_file():
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT event_type, status, summary, payload, correlation_id, symbol, source, event_time, created_at "
+                "FROM audit_events WHERE source = ? ORDER BY COALESCE(event_time, created_at) DESC, id DESC LIMIT 100",
+                ("LIVE_PILOT_ONCE",),
+            ).fetchall()
+            for row in rows:
+                payload_raw = row["payload"] or "{}"
+                payload = json.loads(payload_raw) if isinstance(payload_raw, str) else dict(payload_raw or {})
+                status = str(payload.get("status") or row["status"] or "").upper()
+                remaining_qty = _artifact_int(payload.get("remaining_qty", 0), 0)
+                filled_qty = _artifact_int(payload.get("filled_qty", 0), 0)
+                order_number = str(payload.get("order_number") or "")
+                symbol = str(payload.get("symbol") or row["symbol"] or "")
+                if status == "SUBMITTED" and remaining_qty > 0:
+                    target_order_number = target_order_number or order_number
+                    target_symbol = target_symbol or symbol
+                    audit_pending_state = {
+                        "open": True,
+                        "known": True,
+                        "source": "audit_db",
+                        "status": status,
+                        "order_number": order_number,
+                        "symbol": symbol,
+                        "filled_qty": filled_qty,
+                        "remaining_qty": remaining_qty,
+                        "reason": "LIVE_PILOT_ONCE_ORDER_PENDING",
+                        "blocker": "OPEN_ORDER_PENDING",
+                    }
+                    break
+                if status in {"FILL_CONFIRMED", "FILLED", "CANCELLED", "CANCELED", "REJECTED", "FAILED", "ERROR"}:
+                    return {
+                        "open": False,
+                        "known": True,
+                        "source": "audit_db",
+                        "status": status,
+                        "order_number": order_number,
+                        "symbol": symbol,
+                        "filled_qty": filled_qty,
+                        "remaining_qty": remaining_qty,
+                        "reason": status,
+                        "blocker": "",
+                    }
+        except Exception:
+            pass
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+
+    reconciliation = _latest_reconciliation_evidence(
+        project_root,
+        order_number=target_order_number,
+        symbol=target_symbol,
+        not_before=submit_mtime,
+    )
+    if reconciliation is not None:
+        return reconciliation
+
+    if audit_pending_state is not None:
+        return audit_pending_state
+
+    if submit_evidence is not None:
+        return {
+            "open": True,
+            "known": True,
+            "source": "logs",
+            "status": "SUBMITTED",
+            "order_number": target_order_number,
+            "symbol": target_symbol,
+            "filled_qty": _artifact_int(submit_evidence.get("filled_qty", 0), 0),
+            "remaining_qty": max(1, _artifact_int(submit_evidence.get("remaining_qty", 1), 1)),
+            "reason": "LIVE_PILOT_ONCE_LOG_PENDING",
+            "blocker": "OPEN_ORDER_PENDING",
+        }
+
+    return {
+        "open": False,
+        "known": False,
+        "source": "none",
+        "status": "",
+        "order_number": "",
+        "symbol": "",
+        "filled_qty": 0,
+        "remaining_qty": 0,
+        "reason": "READONLY_UNAVAILABLE",
+        "blocker": "READONLY_UNAVAILABLE",
+    }
+
+
 def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, bool], dict[str, object]]:
     from dashboard.dashboard_routes import get_service, handle_get_summary, trigger_snapshot_refresh_for_precheck
 
@@ -173,6 +479,7 @@ def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, 
 
     risk_loaded, risk_missing = _risk_limits_loaded()
     telegram_target_valid, telegram_ctx = _get_telegram_target_readiness()
+    open_order_state = _live_pilot_open_order_state(Path(__file__).resolve().parents[1])
 
     checks = {
         "LIVE_TRADING_ENABLED_TRUE": bool(system.live_trading_enabled),
@@ -187,6 +494,9 @@ def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, 
         "PORTFOLIO_SOURCE_KIS_REST_FRESH": (not bool(summary.get("portfolio_stale", False))) and str(summary.get("portfolio_source_of_truth", "KIS_REST")) == "KIS_REST",
         "RISK_LIMITS_LOADED": risk_loaded,
         "TELEGRAM_TARGET_VALID": telegram_target_valid,
+        "OPEN_ORDER_RECONCILIATION_KNOWN": bool(open_order_state.get("known", False)),
+        # True when an open order is actually pending and needs reconciliation.
+        "OPEN_ORDER_PENDING": bool(open_order_state.get("known", False)) and bool(open_order_state.get("open", False)),
         "AUDIT_LOGGING_ACTIVE": bool("_audit_repo" in globals()),
         "FILL_RECONCILIATION_ACTIVE": True,
     }
@@ -204,10 +514,221 @@ def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, 
         "ws_status_reason": ws.get("status_reason", ""),
         "risk_limits_missing": risk_missing,
         "portfolio_stale": summary.get("portfolio_stale"),
+        "open_order_state": open_order_state,
+        "open_order_blocker": open_order_state.get("blocker", ""),
+        "open_order_known": bool(open_order_state.get("known", False)),
         "snapshot_refresh": refresh_status,
         **telegram_ctx,
     }
     return checks, context
+
+
+def _count_today_submitted_orders(project_root: Path, symbol: str = "") -> int:
+    db_path = project_root / "data" / "sat3_audit.db"
+    if not db_path.is_file():
+        return 0
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        params: list[object] = ["SUBMITTED"]
+        sql = "SELECT COUNT(*) AS cnt FROM orders WHERE UPPER(COALESCE(status, '')) = ? AND date(created_at) = date('now')"
+        if symbol:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        row = conn.execute(sql, params).fetchone()
+        if row is None:
+            return 0
+        return int(row[0] or 0)
+    except Exception:
+        return 0
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _get_selected_live_candidate(live_real_pipeline_data: dict[str, object] | None, live_pipeline: dict[str, object] | None) -> dict[str, object] | None:
+    candidates: list[dict[str, object]] = []
+    if isinstance(live_real_pipeline_data, dict):
+        raw = live_real_pipeline_data.get("candidates") or []
+        if isinstance(raw, list):
+            candidates.extend([c for c in raw if isinstance(c, dict)])
+    if not candidates and isinstance(live_pipeline, dict):
+        raw = live_pipeline.get("scanner_candidates_sample") or []
+        if isinstance(raw, list):
+            candidates.extend([c for c in raw if isinstance(c, dict)])
+    return candidates[0] if candidates else None
+
+
+def _build_live_order_submit_state(
+    *,
+    checks: dict[str, bool],
+    context: dict[str, object],
+    live_pipeline: dict[str, object] | None,
+    live_real_pipeline_data: dict[str, object] | None,
+    allow_new_buy: bool,
+    project_root: Path,
+) -> dict[str, object]:
+    from kis.account_api import AccountApi
+    from kis.token_cache import TokenCache
+
+    live_pipeline = live_pipeline or {}
+    context = context or {}
+    open_order_raw = context.get("open_order_state")
+    open_order_state = open_order_raw if isinstance(open_order_raw, dict) else {}
+    open_order_known = bool(open_order_state.get("known", False))
+    open_order_pending = bool(open_order_state.get("open", False)) if open_order_known else False
+
+    token_cache = TokenCache()
+    token_record = token_cache.load()
+    token_known = token_record is not None
+    token_expired = True
+    token_reason = "TOKEN_CACHE_UNAVAILABLE"
+    if token_known:
+        try:
+            token_expired = bool(token_cache.is_expired(token_record))
+            token_reason = "TOKEN_EXPIRED" if token_expired else "TOKEN_VALID"
+        except Exception:
+            token_expired = True
+            token_reason = "TOKEN_CACHE_ERROR"
+
+    def _to_int(value: object, default: int = 0) -> int:
+        try:
+            raw = str(value).replace(",", "").strip()
+            return int(float(raw)) if raw else default
+        except Exception:
+            return default
+
+    account_api = AccountApi()
+    account_parts_ok = False
+    cano = ""
+    prdt = ""
+    try:
+        cano, prdt = account_api._get_account_parts()
+        account_parts_ok = bool(re.fullmatch(r"\d{8}", cano) and re.fullmatch(r"\d{2}", prdt))
+    except Exception:
+        account_parts_ok = False
+
+    try:
+        balance = account_api.get_balance()
+    except Exception:
+        balance = {"data_available": False, "total_buyable": 0}
+    balance_ok = bool(balance.get("data_available", False))
+    total_buyable = _to_int(balance.get("total_buyable", 0), 0)
+    orderable_ok = balance_ok and total_buyable > 0
+    cash_ok = orderable_ok
+
+    selected_candidate = _get_selected_live_candidate(live_real_pipeline_data, live_pipeline)
+    selected_row = selected_candidate if isinstance(selected_candidate, dict) else {}
+    selected_symbol = str(selected_row.get("symbol", "") or "")
+    candidate_metrics_raw = selected_row.get("metrics") if isinstance(selected_row.get("metrics"), dict) else {}
+    candidate_metrics = candidate_metrics_raw if isinstance(candidate_metrics_raw, dict) else {}
+    selected_product_type = str(selected_row.get("product_type") or candidate_metrics.get("product_type") or "").upper()
+
+    strategy_buy = _to_int(live_pipeline.get("buy_signals_count", 0), 0) > 0
+    risk_allowed = _to_int(live_pipeline.get("risk_approved_count", 0), 0) > 0 and _to_int(live_pipeline.get("risk_rejected_count", 0), 0) == 0
+    audit_ready = bool(checks.get("AUDIT_LOGGING_ACTIVE", False))
+
+    submitted_today = _count_today_submitted_orders(project_root)
+    daily_limit_raw = os.getenv("SAT3_MAX_DAILY_ORDER_COUNT", os.getenv("SAT3_MAX_DAILY_ORDERS", "1")).strip()
+    try:
+        daily_limit = max(1, int(daily_limit_raw))
+    except Exception:
+        daily_limit = 1
+    duplicate_guard_raw = os.getenv("SAT3_DUPLICATE_ORDER_GUARD_ENABLED", "true").strip().lower()
+    duplicate_guard_enabled = duplicate_guard_raw in {"1", "true", "yes", "on", "y"}
+    duplicate_today = bool(selected_symbol) and _count_today_submitted_orders(project_root, symbol=selected_symbol) > 0
+
+    live_auto_ready = all(bool(v) for v in checks.values())
+    live_start_blockers = [k for k, v in checks.items() if not v]
+
+    reason = "LIVE_ORDER_SUBMIT_ENABLED"
+    next_blocking_point = None
+
+    def _block(code: str) -> None:
+        nonlocal reason, next_blocking_point
+        if reason == "LIVE_ORDER_SUBMIT_ENABLED":
+            reason = code
+            next_blocking_point = code
+
+    if not checks.get("LIVE_TRADING_ENABLED_TRUE", False):
+        _block("LIVE_TRADING_ENABLED=false")
+    elif not checks.get("CONFIRM_ENV_SET", False):
+        _block("SAT3_CONFIRM_LIVE_AUTO_TRADING not confirmed")
+    elif not checks.get("SESSION_REGULAR_MARKET", False):
+        _block("SESSION_STATE_NOT_REGULAR_MARKET")
+    elif not checks.get("MARKET_REGIME_KNOWN", False):
+        _block("MARKET_REGIME_UNKNOWN")
+    elif not checks.get("KIS_REST_AVAILABLE", False) or not checks.get("KIS_REST_FRESH", False):
+        _block("REST_SNAPSHOT_NOT_FRESH")
+    elif not checks.get("KIS_WS_FRESH", False):
+        _block("WS_SNAPSHOT_NOT_FRESH")
+    elif not checks.get("OPEN_ORDER_RECONCILIATION_KNOWN", False):
+        _block("OPEN_ORDER_UNKNOWN")
+    elif open_order_pending:
+        _block("OPEN_ORDER_PENDING")
+    elif token_expired:
+        _block(token_reason)
+    elif not account_parts_ok:
+        _block("ACCOUNT_PARTS_INVALID")
+    elif not balance_ok:
+        _block("BALANCE_UNAVAILABLE")
+    elif not orderable_ok:
+        _block("ORDERABLE_UNAVAILABLE")
+    elif not cash_ok:
+        _block("CASH_UNAVAILABLE")
+    elif not selected_candidate:
+        _block("SELECTED_CANDIDATE_MISSING")
+    elif selected_product_type != "COMMON_STOCK":
+        _block(f"PRODUCT_TYPE_NOT_COMMON_STOCK:{selected_product_type or 'UNKNOWN'}")
+    elif not strategy_buy:
+        _block("STRATEGY_NOT_BUY")
+    elif not risk_allowed:
+        _block("RISK_NOT_ALLOWED")
+    elif not allow_new_buy:
+        _block("ALLOW_NEW_BUY_FALSE")
+    elif not audit_ready:
+        _block("AUDIT_DB_UNAVAILABLE")
+    elif submitted_today >= daily_limit:
+        _block("DAILY_ORDER_LIMIT_EXCEEDED")
+    elif duplicate_guard_enabled and duplicate_today:
+        _block("DUPLICATE_ORDER_GUARD_BLOCKED")
+
+    enabled = reason == "LIVE_ORDER_SUBMIT_ENABLED"
+    return {
+        "order_submit_enabled": enabled,
+        "order_submit_enabled_reason": reason if not enabled else "",
+        "next_blocking_point": next_blocking_point,
+        "live_auto_ready": live_auto_ready,
+        "live_start_blockers": live_start_blockers,
+        "checks": {
+            "session_state_regular_market": bool(checks.get("SESSION_REGULAR_MARKET", False)),
+            "live_trading_enabled": bool(checks.get("LIVE_TRADING_ENABLED_TRUE", False)),
+            "confirm_env_set": bool(checks.get("CONFIRM_ENV_SET", False)),
+            "open_order_state_known": open_order_known,
+            "open_order_pending": open_order_pending,
+            "open_order_state_source": str(open_order_state.get("source", "")),
+            "open_order_state_reason": str(open_order_state.get("reason", "")),
+            "open_order_state_blocker": str(open_order_state.get("blocker", "")),
+            "token_expired": token_expired,
+            "balance_ok": balance_ok,
+            "orderable_ok": orderable_ok,
+            "cash_ok": cash_ok,
+            "allow_new_buy": allow_new_buy,
+            "audit_ready": audit_ready,
+            "daily_order_limit": daily_limit,
+            "orders_submitted_today": submitted_today,
+            "duplicate_guard_enabled": duplicate_guard_enabled,
+            "duplicate_order_today": duplicate_today,
+            "risk_allowed": risk_allowed,
+            "strategy_buy": strategy_buy,
+            "product_type": selected_product_type or "UNKNOWN",
+            "selected_symbol": selected_symbol,
+            "account_parts_ok": account_parts_ok,
+        },
+    }
 
 # Startup log — add project root to path for tools import
 import sys as _sys
@@ -493,7 +1014,21 @@ async def runtime_stop():
 @app.get("/api/runtime/status")
 async def runtime_status():
     with _runtime_lock:
-        return dict(_runtime_status)
+        status = dict(_runtime_status)
+    try:
+        from dashboard.dashboard_routes import handle_get_summary
+
+        summary = handle_get_summary()
+        order_state = summary.get("order_submit_state") if isinstance(summary, dict) else {}
+        order_state = order_state if isinstance(order_state, dict) else {}
+        status["order_submit_enabled"] = bool(order_state.get("order_submit_enabled", status.get("order_submit_enabled", False)))
+        status["order_submit_enabled_reason"] = str(order_state.get("order_submit_enabled_reason", status.get("order_submit_enabled_reason", "")))
+        status["order_submit_checks"] = dict(order_state.get("checks") or {})
+        status["live_auto_ready"] = bool(summary.get("live_auto_ready", False))
+        status["live_start_blockers"] = list(summary.get("live_start_blockers", []) or [])
+    except Exception:
+        pass
+    return status
 
 
 @app.get("/health")

@@ -5,6 +5,7 @@ FastAPI app_factory가 없으므로 독립적인 handler 함수로 구현.
 """
 from __future__ import annotations
 from typing import Any
+from pathlib import Path
 
 from dashboard.dashboard_service import DashboardService
 from dashboard.dashboard_snapshot import build_dashboard_summary
@@ -168,13 +169,15 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
         "live_auto_ready": None,
         "live_start_blockers": [],
     }
+    live_readiness_checks: dict[str, bool] | None = None
+    live_readiness_context: dict[str, object] | None = None
     if include_live_auto_ready:
         try:
             import main as _main
 
-            checks, _ctx = _main._build_live_start_checks(refresh_snapshots=False)
-            readiness["live_auto_ready"] = len([k for k, v in checks.items() if not v]) == 0
-            readiness["live_start_blockers"] = [k for k, v in checks.items() if not v]
+            live_readiness_checks, live_readiness_context = _main._build_live_start_checks(refresh_snapshots=False)
+            readiness["live_auto_ready"] = len([k for k, v in live_readiness_checks.items() if not v]) == 0
+            readiness["live_start_blockers"] = [k for k, v in live_readiness_checks.items() if not v]
         except Exception:
             readiness["live_auto_ready"] = False
             readiness["live_start_blockers"] = ["LIVE_READINESS_CHECK_UNAVAILABLE"]
@@ -209,7 +212,7 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
             "reason": "Live requires strict preconditions",
         }
         live_pipeline = (((_main._runtime_status.get("last_result") or {}).get("live") or {}).get("pipeline") or {})
-        payload["live_pipeline_summary"] = {
+        live_pipeline_summary = {
             "scanner_candidates_count": int(live_pipeline.get("scanner_candidates_count", 0) or 0),
             "strategy_signals_count": int(live_pipeline.get("strategy_signals_count", 0) or 0),
             "buy_signals_count": int(live_pipeline.get("buy_signals_count", 0) or 0),
@@ -227,6 +230,38 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
             "synthetic_order_intents_count": int(live_pipeline.get("synthetic_order_intents_count", 0) or 0),
             "synthetic_reason": str(live_pipeline.get("synthetic_reason", "")),
         }
+        if include_live_auto_ready and live_readiness_checks is not None and live_readiness_context is not None:
+            runtime_last_result = _main._runtime_status.get("last_result")
+            runtime_last_result = runtime_last_result if isinstance(runtime_last_result, dict) else {}
+            live_real_pipeline_data_raw = runtime_last_result.get("live_real_pipeline_data")
+            live_real_pipeline_data = live_real_pipeline_data_raw if isinstance(live_real_pipeline_data_raw, dict) else {}
+            order_submit_state_raw = _main._build_live_order_submit_state(
+                checks=live_readiness_checks,
+                context=live_readiness_context,
+                live_pipeline=live_pipeline,
+                live_real_pipeline_data=live_real_pipeline_data,
+                allow_new_buy=bool(session_view.buy_allowed and regime_view.allow_new_buy),
+                project_root=Path(__file__).resolve().parents[2],
+            )
+            order_submit_state = order_submit_state_raw if isinstance(order_submit_state_raw, dict) else {}
+            order_submit_checks_raw = order_submit_state.get("checks") if isinstance(order_submit_state, dict) else {}
+            order_submit_checks = order_submit_checks_raw if isinstance(order_submit_checks_raw, dict) else {}
+            live_pipeline_summary.update({
+                "order_submit_enabled": bool(order_submit_state.get("order_submit_enabled", False)),
+                "order_submit_enabled_reason": str(order_submit_state.get("order_submit_enabled_reason", "")),
+                "next_blocking_point": order_submit_state.get("next_blocking_point"),
+                "order_submit_checks": dict(order_submit_checks),
+                "selected_candidate": {
+                    "symbol": str(order_submit_checks.get("selected_symbol", "")),
+                    "product_type": str(order_submit_checks.get("product_type", "")),
+                },
+            })
+            payload["order_submit_state"] = order_submit_state
+            payload["runtime_status"] = dict(payload.get("runtime_status") or {})
+            payload["runtime_status"]["order_submit_enabled"] = bool(order_submit_state.get("order_submit_enabled", False))
+            payload["runtime_status"]["order_submit_enabled_reason"] = str(order_submit_state.get("order_submit_enabled_reason", ""))
+            payload["runtime_status"]["order_submit_checks"] = dict(order_submit_checks)
+        payload["live_pipeline_summary"] = live_pipeline_summary
     except Exception:
         payload["runtime_status"] = {"running": False, "reason": "runtime_status_unavailable"}
         payload["runtime_live_mode_policy"] = {"runtime_api_mode": "unknown"}

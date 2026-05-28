@@ -9,6 +9,7 @@ import DataQualityWarningsCard from "../components/dashboard/DataQualityWarnings
 import DateTimeCard from "../components/dashboard/DateTimeCard";
 import TelegramStatusCard from "../components/dashboard/TelegramStatusCard";
 import KisAccountCard from "../components/dashboard/KisAccountCard";
+import LiveReadinessCard from "../components/dashboard/LiveReadinessCard";
 import DailySummaryCard from "../components/dashboard/DailySummaryCard";
 import StrategyBreakdownTable from "../components/dashboard/StrategyBreakdownTable";
 import ScannerCandidatesTable from "../components/dashboard/ScannerCandidatesTable";
@@ -50,6 +51,7 @@ export default function DashboardPage() {
         <DataRouterStatusCard data={data.data_router} />
         <TelegramStatusCard />
         <KisAccountCard />
+        <LiveReadinessCard summary={data} runtimeStatus={data.runtime_status} />
         <DataQualityWarningsCard warnings={data.ws_status?.data_quality_warnings} />
       </div>
 
