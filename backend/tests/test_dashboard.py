@@ -305,7 +305,14 @@ def test_strategy_breakdown_reads_live_pipeline_from_runtime_status(monkeypatch)
     import dashboard.dashboard_routes as routes
 
     snapshot = dict(main._runtime_status)
+    service = routes.get_service()
+    prior_signals = list(service.get_strategy_signals())
     try:
+        service.inject_strategy_signals([
+            StrategySignalView(signal_id="sig-1", symbol="005930", side="BUY", strategy_type="RAPID_SURGE", confidence=0.8, market_regime="BULL"),
+            StrategySignalView(signal_id="sig-2", symbol="005930", side="HOLD", strategy_type="RAPID_SURGE", confidence=0.5, market_regime="BULL"),
+            StrategySignalView(signal_id="sig-3", symbol="000660", side="BUY", strategy_type="MEAN_REVERT", confidence=0.7, market_regime="NEUTRAL"),
+        ])
         main._runtime_status["last_result"] = {
             "live": {
                 "pipeline": {
@@ -329,5 +336,6 @@ def test_strategy_breakdown_reads_live_pipeline_from_runtime_status(monkeypatch)
         assert by_strategy["MEAN_REVERT"]["trades"] == 1
         assert by_strategy["MEAN_REVERT"]["buy_signals"] == 1
     finally:
+        service.inject_strategy_signals(prior_signals)
         main._runtime_status.clear()
         main._runtime_status.update(snapshot)

@@ -43,6 +43,8 @@ class ScannerCandidateView:
     included: bool
     excluded_reason: str | None = None
     symbol_name: str = ""
+    product_type: str = ""
+    market: str = ""
     generated_at: str = ""
     source: str = ""
     mode: str = ""

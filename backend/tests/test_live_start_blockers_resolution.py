@@ -380,7 +380,7 @@ def test_live_start_checks_fail_closed_when_open_order_state_unknown(monkeypatch
 
     checks, ctx = main._build_live_start_checks(refresh_snapshots=False)
     assert checks["OPEN_ORDER_RECONCILIATION_KNOWN"] is False
-    assert checks["OPEN_ORDER_PENDING"] is False
+    assert checks["OPEN_ORDER_PENDING"] is True
     assert ctx["open_order_blocker"] == "READONLY_UNAVAILABLE"
     assert ctx["open_order_known"] is False
 

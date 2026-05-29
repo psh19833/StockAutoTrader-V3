@@ -26,6 +26,10 @@ _snapshot_refresher = KisReadonlySnapshotRefresher(_service)
 # Last successful KIS account snapshot cache (to avoid transient API failures
 # from wiping values to zeros on dashboard refresh)
 _last_kis_account_snapshot: dict[str, Any] | None = None
+# Cached access token for read-only balance reads. Prevents hitting the 1/minute
+# token endpoint limit on every dashboard refresh.
+_last_kis_access_token: str | None = None
+_last_kis_access_token_expires_at: float = 0.0
 
 
 def get_service() -> DashboardService:
@@ -43,6 +47,8 @@ def _sync_dashboard_from_pipeline_result(pipeline: dict[str, Any]) -> None:
             included=bool(c.get("included", False)),
             excluded_reason=c.get("excluded_reason"),
             symbol_name=str(c.get("symbol_name", "")),
+            product_type=str(c.get("product_type", "")),
+            market=str(c.get("market", "")),
             generated_at=str(c.get("generated_at", "")),
             source=str(c.get("source", "")),
             mode=str(c.get("mode", "")),
@@ -122,28 +128,23 @@ def run_runtime_tick_and_sync(mode: str = "dry-run", session: str = "REGULAR_MAR
         except Exception:
             return False, ["LIVE_READINESS_PROVIDER_ERROR"]
 
-    refresh_status = _snapshot_refresher.maybe_refresh(mode=mode, session=session)
+    refresh_mode = "live" if mode == "dry-run" else mode
+    refresh_status = _snapshot_refresher.maybe_refresh(mode=refresh_mode, session=session)
 
     orch = Orchestrator(live_readiness_provider=_live_readiness_provider)
     session_enum = SessionState[session] if session in SessionState.__members__ else SessionState.UNKNOWN
     tick = orch.tick(session_enum, mode=mode)
     tick["snapshot_refresh"] = refresh_status
     dry = tick.get("dry_run") or {}
-    if dry:
+    live_real_pipeline_data = tick.get("live_real_pipeline_data") or {}
+    if isinstance(live_real_pipeline_data, dict) and live_real_pipeline_data:
+        _sync_dashboard_from_pipeline_result(live_real_pipeline_data)
+    elif dry:
         _sync_dashboard_from_dry_result(dry)
 
     if mode == "live":
-        live_real_pipeline_data = tick.get("live_real_pipeline_data") or {
-            "candidates": [],
-            "scores": [],
-            "signals": [],
-            "risk_decisions": [],
-            "order_intents": [],
-        }
-        _sync_dashboard_from_pipeline_result(live_real_pipeline_data)
-    else:
         live_pipeline_data = tick.get("live_pipeline_data") or {}
-        if live_pipeline_data:
+        if live_pipeline_data and not live_real_pipeline_data:
             _sync_dashboard_from_pipeline_result(live_pipeline_data)
     return tick
 
@@ -212,6 +213,10 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
             "reason": "Live requires strict preconditions",
         }
         live_pipeline = (((_main._runtime_status.get("last_result") or {}).get("live") or {}).get("pipeline") or {})
+        runtime_last_result = _main._runtime_status.get("last_result")
+        runtime_last_result = runtime_last_result if isinstance(runtime_last_result, dict) else {}
+        live_real_pipeline_data_raw = runtime_last_result.get("live_real_pipeline_data")
+        live_real_pipeline_data = live_real_pipeline_data_raw if isinstance(live_real_pipeline_data_raw, dict) else {}
         live_pipeline_summary = {
             "scanner_candidates_count": int(live_pipeline.get("scanner_candidates_count", 0) or 0),
             "strategy_signals_count": int(live_pipeline.get("strategy_signals_count", 0) or 0),
@@ -230,11 +235,26 @@ def handle_get_summary(include_live_auto_ready: bool = True) -> dict[str, Any]:
             "synthetic_order_intents_count": int(live_pipeline.get("synthetic_order_intents_count", 0) or 0),
             "synthetic_reason": str(live_pipeline.get("synthetic_reason", "")),
         }
+        if isinstance(live_real_pipeline_data, dict) and live_real_pipeline_data:
+            def _rows(key: str) -> list[dict[str, Any]]:
+                raw = live_real_pipeline_data.get(key) or []
+                return raw if isinstance(raw, list) else []
+
+            real_signals = _rows("signals")
+            real_risk = _rows("risk_decisions")
+            live_pipeline_summary.update({
+                "scanner_candidates_count": len(_rows("candidates")),
+                "strategy_signals_count": len(real_signals),
+                "buy_signals_count": len([s for s in real_signals if str(s.get("side", "")).upper() == "BUY"]),
+                "risk_approved_count": len([r for r in real_risk if bool(r.get("allowed", False))]),
+                "risk_rejected_count": len([r for r in real_risk if not bool(r.get("allowed", False))]),
+                "order_intents_count": len(_rows("order_intents")),
+                "actual_order_submitted": bool(live_real_pipeline_data.get("actual_order_submitted", False)),
+                "live_pipeline_reason": str(live_real_pipeline_data.get("live_pipeline_reason", live_pipeline.get("live_pipeline_reason", ""))),
+                "scanner_status": str(live_real_pipeline_data.get("scanner_status", live_pipeline.get("scanner_status", ""))),
+            })
+
         if include_live_auto_ready and live_readiness_checks is not None and live_readiness_context is not None:
-            runtime_last_result = _main._runtime_status.get("last_result")
-            runtime_last_result = runtime_last_result if isinstance(runtime_last_result, dict) else {}
-            live_real_pipeline_data_raw = runtime_last_result.get("live_real_pipeline_data")
-            live_real_pipeline_data = live_real_pipeline_data_raw if isinstance(live_real_pipeline_data_raw, dict) else {}
             order_submit_state_raw = _main._build_live_order_submit_state(
                 checks=live_readiness_checks,
                 context=live_readiness_context,
@@ -417,18 +437,22 @@ def handle_get_telegram_status() -> dict[str, Any]:
 
 def handle_get_kis_account() -> dict[str, Any]:
     from dashboard.dashboard_models import KisAccountView
-    import os, json, urllib.request, urllib.error
+    from kis.credentials import KisCredentials
+    import json, re, urllib.error, urllib.request
 
-    global _last_kis_account_snapshot
+    global _last_kis_account_snapshot, _last_kis_access_token, _last_kis_access_token_expires_at
 
-    acc = os.getenv("KIS_ACCOUNT_NO", "")
-    prod = os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "01")
-    app_key = os.getenv("KIS_APP_KEY", "")
-    app_secret = os.getenv("KIS_APP_SECRET", "")
+    creds = KisCredentials.from_env()
+    acc = (creds.account_no or "").strip()
+    prod = (creds.account_product_code or "01").strip()
+    app_key = (creds.app_key or "").strip()
+    app_secret = (creds.app_secret or "").strip()
 
     if not acc or not app_key or not app_secret:
         return _to_dict(KisAccountView(
-            account_no=acc, product_code=prod, stale=True,
+            account_no=acc,
+            product_code=prod,
+            stale=True,
         ))
 
     def _as_int(v: Any) -> int:
@@ -438,19 +462,51 @@ def handle_get_kis_account() -> dict[str, Any]:
         except Exception:
             return 0
 
+    def _split_account_parts(raw_account_no: str, raw_product_code: str) -> tuple[str, str]:
+        account_no = raw_account_no.strip()
+        product_code = raw_product_code.strip()
+        if "-" in account_no:
+            left, right = account_no.split("-", 1)
+            account_no = left.strip()
+            if right.strip():
+                product_code = right.strip()
+        account_no = re.sub(r"\D", "", account_no)[:8]
+        product_code = re.sub(r"\D", "", product_code)[:2]
+        return account_no, product_code
+
     try:
-        # 1) Get access token
-        token_url = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
-        token_body = json.dumps({
-            "grant_type": "client_credentials",
-            "appkey": app_key,
-            "appsecret": app_secret,
-        }).encode()
-        token_req = urllib.request.Request(token_url, data=token_body, method="POST")
-        token_req.add_header("content-type", "application/json")
-        token_resp = urllib.request.urlopen(token_req, timeout=10)
-        token_data = json.loads(token_resp.read().decode())
-        access_token = token_data.get("access_token", "")
+        import time
+
+        now = time.time()
+        access_token = ""
+        if _last_kis_access_token and now < _last_kis_access_token_expires_at:
+            access_token = _last_kis_access_token
+        else:
+            # 1) Get access token
+            token_url = f"{creds.base_url.rstrip('/')}/oauth2/tokenP"
+            token_body = json.dumps({
+                "grant_type": "client_credentials",
+                "appkey": app_key,
+                "appsecret": app_secret,
+            }).encode()
+            token_req = urllib.request.Request(token_url, data=token_body, method="POST")
+            token_req.add_header("content-type", "application/json")
+            try:
+                token_resp = urllib.request.urlopen(token_req, timeout=10)
+                token_data = json.loads(token_resp.read().decode())
+                access_token = token_data.get("access_token", "")
+                expires_in = int(token_data.get("expires_in", 86400) or 86400)
+                if access_token:
+                    _last_kis_access_token = access_token
+                    # keep a safety margin so we never reuse a token near expiry
+                    _last_kis_access_token_expires_at = now + max(0, expires_in - 60)
+            except urllib.error.HTTPError as e:
+                # Token endpoint is rate-limited (1/min). If we already have a cached
+                # token from a previous successful read, reuse it instead of failing.
+                if _last_kis_access_token and now < _last_kis_access_token_expires_at:
+                    access_token = _last_kis_access_token
+                else:
+                    raise e
 
         if not access_token:
             if _last_kis_account_snapshot is not None:
@@ -460,14 +516,15 @@ def handle_get_kis_account() -> dict[str, Any]:
             return _to_dict(KisAccountView(account_no=acc, product_code=prod, stale=True))
 
         # 2) Balance inquiry
+        cano, prdt = _split_account_parts(acc, prod)
         bal_url = (
-            "https://openapi.koreainvestment.com:9443"
-            "/uapi/domestic-stock/v1/trading/inquire-balance"
-            "?CANO=" + acc.replace("-", "")[:8] +
-            "&ACNT_PRDT_CD=" + prod +
-            "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=01&UNPR_DVSN=01"
-            "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N"
-            "&PRCS_DVSN=00&CTX_AREA_FK100=&CTX_AREA_NK100="
+            f"{creds.base_url.rstrip('/')}"
+            f"/uapi/domestic-stock/v1/trading/inquire-balance"
+            f"?CANO={cano}"
+            f"&ACNT_PRDT_CD={prdt}"
+            f"&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=01&UNPR_DVSN=01"
+            f"&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N"
+            f"&PRCS_DVSN=00&CTX_AREA_FK100=&CTX_AREA_NK100="
         )
         bal_req = urllib.request.Request(bal_url, method="GET")
         bal_req.add_header("authorization", f"Bearer {access_token}")
@@ -543,16 +600,14 @@ def handle_get_daily_summary(date_str: str = "") -> dict[str, Any]:
 
 def handle_get_strategy_breakdown(date_str: str = "") -> list[dict[str, Any]]:
     try:
-        import main as _main
-        live_pipeline = (((_main._runtime_status.get("last_result") or {}).get("live") or {}).get("pipeline") or {})
-        signals = list(live_pipeline.get("strategy_signals_sample", []) or [])
+        signals = list(get_service().get_strategy_signals())
         if not signals:
             return []
 
         rows: dict[str, dict[str, Any]] = {}
         for sig in signals:
-            strategy = str(sig.get("strategy_type", "UNKNOWN") or "UNKNOWN")
-            side = str(sig.get("side", "")).upper()
+            strategy = str(getattr(sig, "strategy_type", "UNKNOWN") or "UNKNOWN")
+            side = str(getattr(sig, "side", "") or "").upper()
             if strategy not in rows:
                 rows[strategy] = {
                     "strategy": strategy,

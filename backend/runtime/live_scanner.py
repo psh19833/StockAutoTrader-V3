@@ -238,6 +238,8 @@ class LiveScannerAdapter:
                         {
                             "symbol": c.symbol,
                             "symbol_name": c.symbol_name or c.symbol,
+                            "product_type": c.product_type,
+                            "market": c.market,
                             "scanner_type": c.scanner_type.value,
                             "included": True,
                             "excluded_reason": None,

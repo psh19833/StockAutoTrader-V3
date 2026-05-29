@@ -481,6 +481,11 @@ def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, 
     telegram_target_valid, telegram_ctx = _get_telegram_target_readiness()
     open_order_state = _live_pilot_open_order_state(Path(__file__).resolve().parents[1])
 
+    open_order_blocker = str(open_order_state.get("blocker", "") or "").strip()
+    open_order_pending = bool(open_order_state.get("known", False)) and (
+        bool(open_order_state.get("open", False)) or open_order_blocker == "OPEN_ORDER_PENDING"
+    )
+
     checks = {
         "LIVE_TRADING_ENABLED_TRUE": bool(system.live_trading_enabled),
         "CONFIRM_ENV_SET": os.getenv("SAT3_CONFIRM_LIVE_AUTO_TRADING", "") == "CONFIRM_LIVE_AUTO_TRADING",
@@ -495,8 +500,8 @@ def _build_live_start_checks(refresh_snapshots: bool = True) -> tuple[dict[str, 
         "RISK_LIMITS_LOADED": risk_loaded,
         "TELEGRAM_TARGET_VALID": telegram_target_valid,
         "OPEN_ORDER_RECONCILIATION_KNOWN": bool(open_order_state.get("known", False)),
-        # True when an open order is actually pending and needs reconciliation.
-        "OPEN_ORDER_PENDING": bool(open_order_state.get("known", False)) and bool(open_order_state.get("open", False)),
+        # True when no open order is blocking readiness.
+        "OPEN_ORDER_PENDING": not open_order_pending,
         "AUDIT_LOGGING_ACTIVE": bool("_audit_repo" in globals()),
         "FILL_RECONCILIATION_ACTIVE": True,
     }
@@ -571,7 +576,7 @@ def _build_live_order_submit_state(
     allow_new_buy: bool,
     project_root: Path,
 ) -> dict[str, object]:
-    from kis.account_api import AccountApi
+    from dashboard.dashboard_routes import handle_get_kis_account
     from kis.token_cache import TokenCache
 
     live_pipeline = live_pipeline or {}
@@ -601,19 +606,36 @@ def _build_live_order_submit_state(
         except Exception:
             return default
 
-    account_api = AccountApi()
-    account_parts_ok = False
-    cano = ""
-    prdt = ""
     try:
-        cano, prdt = account_api._get_account_parts()
-        account_parts_ok = bool(re.fullmatch(r"\d{8}", cano) and re.fullmatch(r"\d{2}", prdt))
+        account_view = handle_get_kis_account()
+        if isinstance(account_view, dict):
+            account_no_raw = str(account_view.get("account_no", "") or "")
+            product_code_raw = str(account_view.get("product_code", "") or "")
+            if "-" in account_no_raw:
+                account_no_part, product_code_part = account_no_raw.split("-", 1)
+                account_parts_ok = bool(
+                    re.fullmatch(r"\d{8}", account_no_part.strip())
+                    and re.fullmatch(r"\d{2}", (product_code_part or product_code_raw).strip())
+                )
+            else:
+                account_parts_ok = bool(
+                    re.fullmatch(r"\d{8}", account_no_raw.strip())
+                    and re.fullmatch(r"\d{2}", product_code_raw.strip())
+                )
+            balance_ok = not bool(account_view.get("stale", True))
+            total_buyable = _to_int(account_view.get("deposit", 0), 0)
+            orderable_ok = balance_ok and total_buyable > 0
+            cash_ok = orderable_ok
+            balance = {
+                "data_available": balance_ok,
+                "total_buyable": total_buyable,
+                "source": "KIS_API",
+            }
+        else:
+            account_parts_ok = False
+            balance = {"data_available": False, "total_buyable": 0}
     except Exception:
         account_parts_ok = False
-
-    try:
-        balance = account_api.get_balance()
-    except Exception:
         balance = {"data_available": False, "total_buyable": 0}
     balance_ok = bool(balance.get("data_available", False))
     total_buyable = _to_int(balance.get("total_buyable", 0), 0)
@@ -627,8 +649,19 @@ def _build_live_order_submit_state(
     candidate_metrics = candidate_metrics_raw if isinstance(candidate_metrics_raw, dict) else {}
     selected_product_type = str(selected_row.get("product_type") or candidate_metrics.get("product_type") or "").upper()
 
-    strategy_buy = _to_int(live_pipeline.get("buy_signals_count", 0), 0) > 0
-    risk_allowed = _to_int(live_pipeline.get("risk_approved_count", 0), 0) > 0 and _to_int(live_pipeline.get("risk_rejected_count", 0), 0) == 0
+    readiness_pipeline = live_real_pipeline_data if isinstance(live_real_pipeline_data, dict) else live_pipeline
+
+    def _list_rows(source: dict[str, object], *keys: str) -> list[dict[str, object]]:
+        for key in keys:
+            raw = source.get(key)
+            if isinstance(raw, list):
+                return [item for item in raw if isinstance(item, dict)]
+        return []
+
+    readiness_signals = _list_rows(readiness_pipeline, "signals", "strategy_signals_sample")
+    readiness_risk = _list_rows(readiness_pipeline, "risk_decisions", "risk_decisions_sample")
+    strategy_buy = any(str(sig.get("side", "")).upper() == "BUY" for sig in readiness_signals)
+    risk_allowed = any(bool(r.get("allowed", False)) for r in readiness_risk) and not any(not bool(r.get("allowed", False)) for r in readiness_risk)
     audit_ready = bool(checks.get("AUDIT_LOGGING_ACTIVE", False))
 
     submitted_today = _count_today_submitted_orders(project_root)

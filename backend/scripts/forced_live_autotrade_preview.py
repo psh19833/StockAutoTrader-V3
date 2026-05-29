@@ -55,6 +55,7 @@ from runtime.data_router import MarketDataRouter
 from runtime.market_cache import MarketCache
 from runtime.live_scanner import LiveScannerAdapter
 from runtime.scheduler import SessionState
+from runtime.live_real_audit import build_live_real_readonly_audit
 
 
 def _safe_bool_env(key: str, default: bool = False) -> bool:
@@ -309,228 +310,59 @@ def run_preview(
     candidate_obj: ScannerCandidate | None = None
 
     if mode == "real":
-        router = MarketDataRouter(MarketCache(), rest_provider=rest_provider)
-        scanner = LiveScannerAdapter(router)
-        # Determine symbol universe (default smoke vs optional expanded universe)
-        symbols = ["005930", "000660", "035720"]
-        if real_universe_top_n is not None:
-            report["universe"]["top_n"] = int(real_universe_top_n)
-            report["universe"]["requested_top_n"] = int(real_universe_top_n)
-            report["universe"]["source"] = "kis_volume_top"
-            report["universe"]["limit_reason"] = "requested_kis_volume_top"
-            params = None
-            if real_universe_params_json:
-                try:
-                    params = json.loads(real_universe_params_json)
-                except Exception:
-                    params = None
-                    report["universe"]["fetch_error"] = "params_json_parse_failed"
-            if rest_provider is None:
-                report["universe"]["fetch_error"] = report["universe"]["fetch_error"] or "rest_provider_disabled"
-            else:
-                try:
-                    from runtime.universe_source import fetch_universe_from_kis_volume_top
-
-                    # Use the provider's facade to avoid spinning a second auth flow.
-                    facade = getattr(rest_provider, "_facade", None)
-                    if facade is None:
-                        report["universe"]["fetch_error"] = "facade_unavailable"
-                    else:
-                        res = fetch_universe_from_kis_volume_top(facade, top_n=int(real_universe_top_n), params=params)
-                        if res.symbols:
-                            symbols = res.symbols
-                            report["universe"]["raw_row_count"] = getattr(res, "raw_row_count", None)
-                            report["universe"]["parsed_symbol_count"] = getattr(res, "parsed_symbol_count", None)
-                            report["universe"]["used_symbol_count"] = getattr(res, "used_symbol_count", None)
-                            report["universe"]["count"] = len(symbols)
-                            report["universe"]["symbols_sample"] = symbols[: min(10, len(symbols))]
-                            report["universe"]["sample_count"] = len(report["universe"]["symbols_sample"]) if isinstance(report["universe"]["symbols_sample"], list) else None
-                            report["universe"]["limit_reason"] = "used_symbols_from_kis_volume_top"
-                        else:
-                            report["universe"]["fetch_error"] = report["universe"]["fetch_error"] or (res.error_type or res.error_reason or "universe_empty")
-                except Exception as e:
-                    report["universe"]["fetch_error"] = f"universe_fetch_failed:{type(e).__name__}"
-
-            if report["universe"]["fetch_error"] and not universe_strict:
-                report["universe"]["fallback_used"] = True
-                report["universe"]["source"] = "default_smoke_fallback"
-                report["universe"]["limit_reason"] = "fallback_default_smoke_on_fetch_error"
-                symbols = ["005930", "000660", "035720"]
-            if report["universe"]["fetch_error"] and universe_strict:
-                # strict: keep symbols empty -> will yield NO_FRESH_DATA/candidates=0 with clear report
-                report["universe"]["limit_reason"] = "strict_mode_fetch_error"
-                symbols = []
-
-        # We force the session argument to REGULAR_MARKET to maximize scan attempt.
-        scan = scanner.run_live_scan(session=SessionState.REGULAR_MARKET.value, symbols=symbols)
-        scan_status = scan.status
-        scan_reason = scan.reason
-        scan_id = scan.scan_id
-
-        # Always fill debug skeleton (no secrets)
-        report["scanner"]["debug"]["scan_status"] = scan_status
-        report["scanner"]["debug"]["scan_reason"] = scan_reason
-        report["scanner"]["debug"]["scan_id"] = scan_id
-        report["scanner"]["debug"]["stocks_built_count"] = len(symbols or [])
-        candidates = list(scan.candidates or [])
-        report["scanner"]["candidate_count"] = len(candidates)
-        if not candidates:
-            # NOTE: LiveScannerAdapter returns LIVE_SCANNER_OK even if *all* candidates were excluded.
-            # We record a more informative empty_reason and include debug details (no secrets).
-            report["scanner"]["empty_reason"] = scan_reason or scan_status or "NO_CANDIDATES"
-
-            debug: dict[str, Any] = {
-                "scan_status": scan_status,
-                "scan_reason": scan_reason,
-                "stocks_built_count": 0,
-                "per_symbol": [],
-                "scanner_engine_summary": [],
-            }
-
-            # For DATA_UNAVAILABLE debugging (scanner.filters.check_common_filters)
-            required_common_fields = [
-                "current_price",
-                "trading_value",
-                "volume",
-                "spread_rate",
-                "is_trading_halted",
-                "is_management_issue",
-                "is_investment_warning",
-            ]
-
-            symbols = symbols or ["005930", "000660", "035720"]
-            stocks: list[dict[str, Any]] = []
-            for s in symbols:
-                row = scanner._build_stock_metrics(s)  # preview diagnostic-only
-                if row is None:
-                    debug["per_symbol"].append({"symbol": s, "metrics_built": False})
-                    continue
-                stocks.append(row)
-
-            # trading_value_rank: computed from this universe only (preview-level)
-            sorted_by_tv = sorted(
-                [r for r in stocks if isinstance(r, dict)],
-                key=lambda r: float(r.get("trading_value") or 0),
-                reverse=True,
-            )
-            tv_rank: dict[str, int] = {str(r.get("symbol")): i + 1 for i, r in enumerate(sorted_by_tv) if r.get("symbol")}
-
-            for row in stocks:
-                sym = str(row.get("symbol"))
-                if sym in tv_rank:
-                    row["trading_value_rank"] = tv_rank[sym]
-                    row["trading_value_rank_source"] = "preview_universe_sort_by_trading_value"
-                    row["universe_size_for_rank"] = len(tv_rank)
-
-                missing_fields = [k for k in required_common_fields if k not in row or row.get(k) is None]
-                invalid_fields: list[str] = []
-                for k in ("current_price", "trading_value", "volume", "spread_rate"):
-                    v = row.get(k)
-                    if v in (None, "", "-", "N/A", "nan", "NaN", "null"):
-                        invalid_fields.append(f"{k}={v}")
-
-                debug["per_symbol"].append(
-                    {
-                        "symbol": sym,
-                        "metrics_built": True,
-                        "current_price": row.get("current_price"),
-                        "volume": row.get("volume"),
-                        "trading_value": row.get("trading_value"),
-                        "trading_value_rank": row.get("trading_value_rank"),
-                        "trading_value_rank_source": row.get("trading_value_rank_source"),
-                        "universe_size_for_rank": row.get("universe_size_for_rank"),
-                        "spread_rate": row.get("spread_rate"),
-                        "intraday_change_rate": row.get("intraday_change_rate"),
-                        "price_source": "router.trade_tick_snapshot.trade_price",
-                        "volume_source": "router.trade_tick_snapshot.accumulated_volume_or_trade_volume",
-                        "trading_value_source": "router.trade_tick_snapshot.accumulated_trading_value_or_fallback",
-                        "trading_value_filter_min": 500_000_000,
-                        "trading_value_pass": bool((row.get("trading_value") or 0) >= 500_000_000),
-                        "price_filter_max": 1_000_000,
-                        "price_pass": bool((row.get("current_price") or 0) <= 1_000_000),
-                        "missing_required_common_fields": missing_fields,
-                        "zero_or_invalid_common_fields": invalid_fields,
-                    }
-                )
-            debug["stocks_built_count"] = len(stocks)
-
-            if stocks:
-                try:
-                    from scanner.scanner_engine import run_all_scanners
-
-                    results = run_all_scanners(
-                        stocks=stocks,
-                        market_regime="NEUTRAL",
-                        scan_run_id=scan_id,
-                    )
-                    for r in results:
-                        excluded_reasons: dict[str, int] = {}
-                        included_count = 0
-                        excluded_count = 0
-                        for c in getattr(r, "candidates", ()) or ():
-                            if getattr(c, "included", False):
-                                included_count += 1
-                            else:
-                                excluded_count += 1
-                                reason = str(getattr(c, "excluded_reason", "") or "")
-                                excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
-                        top_reasons = sorted(
-                            excluded_reasons.items(),
-                            key=lambda x: x[1],
-                            reverse=True,
-                        )[:5]
-                        debug["scanner_engine_summary"].append(
-                            {
-                                "scanner_type": str(getattr(r, "scanner_type", "")),
-                                "collected_count": int(getattr(r, "collected_count", 0) or 0),
-                                "included_count": included_count,
-                                "excluded_count": excluded_count,
-                                "top_excluded_reasons": top_reasons,
-                            }
-                        )
-
-                    if scan_reason == "LIVE_SCANNER_OK":
-                        report["scanner"]["empty_reason"] = "LIVE_SCANNER_OK_BUT_NO_CANDIDATES"
-                except Exception as e:
-                    debug["scanner_engine_summary"].append(
-                        {"error": f"scanner_summary_failed:{type(e).__name__}"}
-                    )
-
-            report["scanner"]["debug"] = debug
-        else:
-            sel = candidates[0]
+        audit = build_live_real_readonly_audit(
+            rest_provider=rest_provider,
+            real_universe_top_n=real_universe_top_n,
+            real_universe_params_json=real_universe_params_json,
+            universe_strict=bool(universe_strict),
+            session=SessionState.REGULAR_MARKET.value,
+        )
+        report["rest_provider"] = rest_provider_meta
+        report["scanner"]["candidate_count"] = len(audit.get("candidates") or [])
+        report["scanner"]["selected_candidate"] = None
+        if isinstance(audit.get("selected_candidate"), dict):
+            sel = audit["selected_candidate"]
             report["scanner"]["selected_candidate"] = {
                 "symbol": sel.get("symbol"),
                 "scanner_type": sel.get("scanner_type"),
                 "metrics_keys": sorted(list((sel.get("metrics") or {}).keys()))[:25],
             }
-
-            # Candidate preview list: safe subset only (no secrets)
-            preview: list[dict[str, Any]] = []
-            for c in candidates[:5]:
-                if not isinstance(c, dict):
-                    continue
-                m = dict(c.get("metrics") or {})
-                preview.append(
-                    {
-                        "symbol": c.get("symbol"),
-                        "scanner_type": c.get("scanner_type"),
-                        "score": c.get("score"),
-                        "current_price": m.get("current_price"),
-                        "trading_value": m.get("trading_value"),
-                        "trading_value_rank": c.get("trading_value_rank"),
-                        "intraday_change_rate": m.get("intraday_change_rate"),
-                    }
-                )
-            report["scanner"]["candidates_preview"] = preview
-
-            # Keep scanner_engine_summary key present; do not compute heavy summary when candidates exist.
-            report["scanner"]["debug"]["scanner_engine_summary"] = [{"note": "not_computed_when_candidates_present"}]
-
-            # Selection reason (explicit)
-            report["scanner"]["selection_reason"] = "selected_first_candidate_from_live_scan_order"
-            candidate_obj = _candidate_from_live_row(sel, scan_run_id=scan_id)
-
+        report["scanner"]["candidates_preview"] = [
+            {
+                "symbol": c.get("symbol"),
+                "scanner_type": c.get("scanner_type"),
+                "score": c.get("score"),
+                "current_price": (c.get("metrics") or {}).get("current_price"),
+                "trading_value": (c.get("metrics") or {}).get("trading_value"),
+                "trading_value_rank": c.get("trading_value_rank"),
+                "intraday_change_rate": (c.get("metrics") or {}).get("intraday_change_rate"),
+            }
+            for c in (audit.get("candidates") or [])[:5]
+            if isinstance(c, dict)
+        ]
+        report["scanner"]["debug"]["scan_status"] = audit.get("scanner_status")
+        report["scanner"]["debug"]["scan_reason"] = audit.get("scanner_reason")
+        report["scanner"]["debug"]["scan_id"] = audit.get("scan_id")
+        report["strategy"]["decision"] = (audit.get("signals") or [None])[0]
+        if audit.get("signals"):
+            report["strategy"]["decision"] = audit["signals"][0]
+            report["strategy"]["reason"] = None
+        else:
+            report["strategy"]["decision"] = None
+            report["strategy"]["reason"] = "strategy(no_signal)"
+        report["risk"]["allowed"] = bool((audit.get("risk_decisions") or [{}])[0].get("allowed", False)) if audit.get("risk_decisions") else None
+        report["risk"]["blockers"] = []
+        report["risk"]["warnings"] = []
+        if audit.get("risk_decisions"):
+            rd = audit["risk_decisions"][0]
+            report["risk"]["allowed"] = bool(rd.get("allowed", False))
+            if not rd.get("allowed", False):
+                report["risk"]["blockers"] = [rd.get("reason_code") or rd.get("reason_text") or "RISK_REJECTED"]
+        report["order_intent"] = {k: (audit.get("order_intents") or [{}])[0].get(k) for k in ("symbol", "side", "quantity", "price", "order_type")}
+        report["actual_order_submitted"] = False
+        report["next_blocking_point"] = audit.get("next_blocking_point") or _next_blocking_point_hint(report)
+        report["kis_payload_preview"] = {}
+        return report
     elif mode == "fixture":
         sym = symbol or "005930"
         candidate_obj = _fixture_candidate(sym)

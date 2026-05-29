@@ -7,6 +7,74 @@ import pytest
 import main
 
 
+class _FakeLiveScan:
+    status = "READY"
+    reason = "LIVE_SCANNER_OK"
+    candidates = [
+        {
+            "symbol": "018880",
+            "scanner_type": "RAPID_SURGE",
+            "included": True,
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "source": "LIVE_SCANNER",
+            "mode": "LIVE",
+            "synthetic": False,
+            "origin": "live",
+            "scan_id": "scan_live_1",
+            "run_id": "candidate:scan_live_1",
+            "is_live_candidate": True,
+            "product_type": "COMMON_STOCK",
+            "market": "KOSPI",
+            "metrics": {"product_type": "COMMON_STOCK"},
+        }
+    ]
+
+    def to_dict(self):
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "scan_id": "scan_live_1",
+            "source": "LIVE_SCANNER",
+            "mode": "LIVE",
+            "synthetic": False,
+            "candidates": list(self.candidates),
+            "error": "",
+        }
+
+
+def _fake_live_scan(self, session, symbols=None):
+    return _FakeLiveScan()
+
+
+def _fake_live_real_audit(**kwargs):
+    candidate = dict(_FakeLiveScan.candidates[0])
+    return {
+        "source": "LIVE_REAL_READONLY_AUDIT",
+        "synthetic": False,
+        "mode": "LIVE",
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "scan_id": "scan_live_1",
+        "scanner_status": "READY",
+        "scanner_reason": "LIVE_SCANNER_OK",
+        "universe": {"count": 3},
+        "candidates": [candidate],
+        "scores": [{"symbol": candidate["symbol"], "scanner_type": candidate["scanner_type"], "decision": "PASS", "final_score": 75.0, "liquidity_score": 20.0, "momentum_score": 15.0, "mode": "LIVE", "synthetic": False, "source": "LIVE_REAL_READONLY_AUDIT"}],
+        "signals": [{"signal_id": "sig_1", "correlation_id": "corr_1", "symbol": candidate["symbol"], "side": "BUY", "strategy_type": "RAPID_SURGE", "confidence": 0.81, "market_regime": "BULL", "scanner_type": "RAPID_SURGE", "source_endpoints": [], "mode": "LIVE", "synthetic": False, "source": "LIVE_REAL_READONLY_AUDIT"}],
+        "risk_decisions": [{"risk_decision_id": "risk_1", "signal_id": "sig_1", "correlation_id": "corr_1", "symbol": candidate["symbol"], "side": "BUY", "allowed": True, "reason_code": "RISK_OK", "reason_text": "OK", "mode": "LIVE", "synthetic": False, "source": "LIVE_REAL_READONLY_AUDIT"}],
+        "order_intents": [{"order_intent_id": "oi_1", "risk_decision_id": "risk_1", "signal_id": "sig_1", "correlation_id": "corr_1", "symbol": candidate["symbol"], "side": "BUY", "order_type": "MARKET", "quantity": 1, "price": 1000, "estimated_amount": 1000, "source_strategy": "RAPID_SURGE", "source_endpoints": [], "live_trading_enabled_snapshot": False, "approved_by_risk": True, "submitted": False, "blocked_reason": "AUDIT_ONLY_NO_SUBMIT", "mode": "LIVE", "synthetic": False, "source": "LIVE_REAL_READONLY_AUDIT"}],
+        "selected_candidate": candidate,
+        "actual_order_submitted": False,
+        "next_blocking_point": None,
+    }
+
+def _as_int(value):
+    try:
+        return int(value or 0)
+    except Exception:
+        return 0
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -25,7 +93,9 @@ def _reset_runtime_state() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_runtime_state():
+def _isolate_runtime_state(monkeypatch):
+    monkeypatch.setattr("runtime.orchestrator.LiveScannerAdapter.run_live_scan", _fake_live_scan)
+    monkeypatch.setattr("runtime.orchestrator.build_live_real_readonly_audit", _fake_live_real_audit)
     _run(main.runtime_stop())
     _reset_runtime_state()
     yield
@@ -41,6 +111,35 @@ def test_runtime_tick_updates_dashboard_read_models():
     assert counts.get("candidates", 0) >= 1
     assert counts.get("scores", 0) >= 1
     assert counts.get("signals", 0) >= 1
+    live_real = result.get("live_real_pipeline_data", {})
+    assert len(live_real.get("candidates", []) or []) == 1
+    assert len(live_real.get("signals", []) or []) == 1
+    assert len(live_real.get("risk_decisions", []) or []) == 1
+    assert len(live_real.get("order_intents", []) or []) == 1
+    assert live_real.get("actual_order_submitted") is False
+
+    status = _run(main.runtime_status())
+    assert _as_int(status.get("tick_count")) >= 1
+    assert status.get("order_submit_enabled") in {False, True}
+
+    from dashboard.dashboard_routes import (
+        handle_get_candidates,
+        handle_get_summary,
+        handle_get_strategy_breakdown,
+        handle_get_risk_decisions,
+    )
+
+    summary = handle_get_summary()
+    selected = (summary.get("live_pipeline_summary") or {}).get("selected_candidate", {})
+    assert selected.get("symbol") == "018880"
+    assert selected.get("product_type") == "COMMON_STOCK"
+    assert _as_int((summary.get("live_pipeline_summary") or {}).get("scanner_candidates_count")) == 1
+    candidates = handle_get_candidates()
+    assert len(candidates) == 1
+    assert candidates[0].get("symbol") == "018880"
+    assert candidates[0].get("product_type") == "COMMON_STOCK"
+    assert len(handle_get_strategy_breakdown()) == 1
+    assert len(handle_get_risk_decisions()) == 1
 
 
 def test_runtime_tick_rejects_live_mode_when_preconditions_fail(monkeypatch):
@@ -164,38 +263,115 @@ def test_runtime_start_status_stop_cycle():
     assert stopped.get("stopped") is True
 
 
-def test_runtime_tick_live_exposes_pipeline_summary_when_ready(monkeypatch):
-    monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+def test_runtime_tick_live_syncs_runtime_state_and_dashboard_when_runner_not_configured(monkeypatch):
+    monkeypatch.delenv("SAT3_ENABLE_LIVE_RUNNER", raising=False)
     forced_checks = {
         "LIVE_TRADING_ENABLED_TRUE": True,
         "CONFIRM_ENV_SET": True,
         "EMERGENCY_STOP_INACTIVE": True,
         "KIS_REST_AVAILABLE": True,
+        "KIS_REST_FRESH": True,
         "KIS_WS_AVAILABLE": True,
+        "KIS_WS_FRESH": True,
         "SESSION_REGULAR_MARKET": True,
         "MARKET_REGIME_KNOWN": True,
         "PORTFOLIO_SOURCE_KIS_REST_FRESH": True,
         "RISK_LIMITS_LOADED": True,
-        "TELEGRAM_STATUS_AVAILABLE": True,
+        "TELEGRAM_TARGET_VALID": True,
+        "OPEN_ORDER_RECONCILIATION_KNOWN": True,
+        "OPEN_ORDER_PENDING": True,
         "AUDIT_LOGGING_ACTIVE": True,
         "FILL_RECONCILIATION_ACTIVE": True,
     }
-    import runtime.orchestrator as orchestrator_mod
-    monkeypatch.setattr(orchestrator_mod, "maybe_create_kis_rest_provider", lambda: (None, {"configured": False, "reason": "test_isolation"}))
     monkeypatch.setattr(main, "_build_live_start_checks", lambda refresh_snapshots=True: (forced_checks, {"session": "REGULAR_MARKET"}))
+
+    import dashboard.dashboard_routes as routes
+    import runtime.orchestrator as orchestrator_mod
+
+    monkeypatch.setattr(routes._snapshot_refresher, "maybe_refresh", lambda mode, session: {"enabled": False, "reason": "test_isolation"})
+
+    class _FakeLiveScan:
+        status = "READY"
+        reason = "LIVE_SCANNER_OK"
+        candidates = [
+            {
+                "symbol": "018880",
+                "scanner_type": "RAPID_SURGE",
+                "included": True,
+                "generated_at": "2026-01-01T00:00:00+00:00",
+                "source": "LIVE_SCANNER",
+                "mode": "LIVE",
+                "synthetic": False,
+                "origin": "live",
+                "scan_id": "scan_live_1",
+                "run_id": "candidate:scan_live_1",
+                "is_live_candidate": True,
+                "product_type": "COMMON_STOCK",
+                "metrics": {"product_type": "COMMON_STOCK"},
+            }
+        ]
+
+        def to_dict(self):
+            return {
+                "status": self.status,
+                "reason": self.reason,
+                "generated_at": "2026-01-01T00:00:00+00:00",
+                "scan_id": "scan_live_1",
+                "source": "LIVE_SCANNER",
+                "mode": "LIVE",
+                "synthetic": False,
+                "candidates": list(self.candidates),
+                "error": "",
+            }
+
+    monkeypatch.setattr(orchestrator_mod.LiveScannerAdapter, "run_live_scan", lambda self, session, symbols=None: _FakeLiveScan())
 
     tick = _run(main.runtime_tick(mode="live", session="REGULAR_MARKET"))
     pipeline = ((tick.get("live") or {}).get("pipeline") or {})
-    assert int(pipeline.get("scanner_candidates_count", 0)) == 0
-    assert int(pipeline.get("order_intents_count", 0)) == 0
-    assert int(pipeline.get("synthetic_candidates_count", 0)) >= 1
-    assert int(pipeline.get("synthetic_order_intents_count", 0)) >= 1
-    assert pipeline.get("live_pipeline_reason") in {"LIVE_SCANNER_NO_FRESH_DATA", "LIVE_SCANNER_NOT_CONNECTED"}
+    assert tick.get("live_real_pipeline_data", {}).get("candidates")
+    assert int(pipeline.get("scanner_candidates_count", 0)) == 1
+    assert int(pipeline.get("strategy_signals_count", 0)) == 1
+    assert int(pipeline.get("risk_approved_count", 0)) == 1
+    assert int(pipeline.get("order_intents_count", 0)) == 1
     assert pipeline.get("actual_order_submitted") is False
+    assert pipeline.get("order_submit_enabled") is False
+
+    status = _run(main.runtime_status())
+    assert int(status.get("tick_count", 0)) >= 1
+    assert isinstance(status.get("last_result"), dict)
+
+    summary = routes.handle_get_summary()
+    assert int((summary.get("scanner_summary") or {}).get("total", 0)) == 1
+    selected = (summary.get("live_pipeline_summary") or {}).get("selected_candidate", {})
+    assert selected.get("symbol") == "018880"
+    assert selected.get("product_type") == "COMMON_STOCK"
+    candidates = routes.handle_get_candidates()
+    assert len(candidates) == 1
+    assert candidates[0].get("product_type") == "COMMON_STOCK"
+    assert len(routes.handle_get_strategy_breakdown()) == 1
+    assert len(routes.handle_get_risk_decisions()) == 1
 
 
 def test_runtime_tick_live_session_blocked_exposes_waiting_scanner_status(monkeypatch):
     monkeypatch.setenv("SAT3_ENABLE_LIVE_RUNNER", "true")
+    monkeypatch.setattr("runtime.orchestrator.build_live_real_readonly_audit", lambda **kwargs: {
+        "source": "LIVE_REAL_READONLY_AUDIT",
+        "synthetic": False,
+        "mode": "LIVE",
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "scan_id": "scan_live_1",
+        "scanner_status": "WAITING_FOR_REGULAR_MARKET",
+        "scanner_reason": "SESSION_NOT_REGULAR_MARKET",
+        "universe": {"count": 0},
+        "candidates": [],
+        "scores": [],
+        "signals": [],
+        "risk_decisions": [],
+        "order_intents": [],
+        "selected_candidate": None,
+        "actual_order_submitted": False,
+        "next_blocking_point": "SESSION_NOT_REGULAR_MARKET",
+    })
     forced_checks = {
         "LIVE_TRADING_ENABLED_TRUE": True,
         "CONFIRM_ENV_SET": True,

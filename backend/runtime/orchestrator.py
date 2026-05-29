@@ -12,6 +12,7 @@ from runtime.dry_decision_runner import DryDecisionRunner
 from runtime.live_trading_runner import LiveTradingRunner
 from runtime.live_scanner import LiveScannerAdapter
 from runtime.rest_provider_factory import maybe_create_kis_rest_provider
+from runtime.live_real_audit import build_live_real_readonly_audit
 
 
 class Orchestrator:
@@ -149,6 +150,7 @@ class Orchestrator:
             "signals": live_signals,
             "risk_decisions": live_risk,
             "order_intents": live_intents,
+            "actual_order_submitted": False,
         }
         return live_pipeline, synthetic_audit, live_real_data
 
@@ -298,6 +300,14 @@ class Orchestrator:
                     "risk_decisions": dry.get("risk_decisions", []) or [],
                     "order_intents": dry.get("order_intents", []) or [],
                 }
+                rest_meta = self._ensure_rest_provider()
+                live_real_data = build_live_real_readonly_audit(
+                    rest_provider=self._rest_provider,
+                    real_universe_top_n=20,
+                    session=session.value,
+                )
+                result["rest_provider"] = rest_meta
+                result["live_real_pipeline_data"] = live_real_data
             elif mode == "live":
                 ready = False
                 block_reasons = ["LIVE_READINESS_PROVIDER_NOT_CONFIGURED"]
@@ -317,31 +327,41 @@ class Orchestrator:
 
                 # Read-only live pipeline audit: scanner -> strategy -> risk -> order intent.
                 # Never submits real orders.
-                if live_payload.get("status") == "LIVE_PIPELINE_TICK_EXECUTED":
-                    live_scan = self._live_scanner.run_live_scan(session=session.value)
-                    live_chain = self._build_live_chain_from_candidates(list(live_scan.candidates or []))
-                    dry = self._dry_runner.run()
-                    live_pipeline, synthetic_audit, live_real_data = self._build_live_pipeline_audit(
-                        dry,
-                        live_chain,
-                        scanner_status=str(live_scan.status),
-                        live_pipeline_reason=str(live_scan.reason),
-                    )
-                    live_pipeline["live_scan"] = live_scan.to_dict()
-                    live_payload["pipeline"] = live_pipeline
-                    result["synthetic_audit"] = synthetic_audit
-                    result["live_real_pipeline_data"] = live_real_data
-                elif live_payload.get("status") == "BLOCKED_SESSION":
-                    dry = self._dry_runner.run()
-                    live_pipeline, synthetic_audit, live_real_data = self._build_live_pipeline_audit(
-                        dry,
-                        live_chain={"candidates": [], "scores": [], "signals": [], "risk_decisions": [], "order_intents": []},
-                        scanner_status="WAITING_FOR_REGULAR_MARKET",
-                        live_pipeline_reason="SESSION_NOT_REGULAR_MARKET",
-                    )
-                    live_payload["pipeline"] = live_pipeline
-                    result["synthetic_audit"] = synthetic_audit
-                    result["live_real_pipeline_data"] = live_real_data
+                dry = self._dry_runner.run()
+                result["synthetic_audit"] = dry
+                audit = build_live_real_readonly_audit(
+                    rest_provider=self._rest_provider,
+                    real_universe_top_n=20,
+                    session=session.value,
+                )
+                live_chain = {
+                    "candidates": list(audit.get("candidates") or []),
+                    "scores": list(audit.get("scores") or []),
+                    "signals": list(audit.get("signals") or []),
+                    "risk_decisions": list(audit.get("risk_decisions") or []),
+                    "order_intents": list(audit.get("order_intents") or []),
+                }
+                live_pipeline, _synthetic_unused, _live_real_unused = self._build_live_pipeline_audit(
+                    {"candidates": [], "scores": [], "signals": [], "risk_decisions": [], "order_intents": []},
+                    live_chain,
+                    scanner_status="WAITING_FOR_REGULAR_MARKET" if live_payload.get("status") == "BLOCKED_SESSION" else str(audit.get("scanner_status") or ""),
+                    live_pipeline_reason="SESSION_NOT_REGULAR_MARKET" if live_payload.get("status") == "BLOCKED_SESSION" else str(audit.get("scanner_reason") or ""),
+                )
+                live_pipeline["scanner_reason"] = str(audit.get("scanner_reason") or "")
+                if audit.get("selected_candidate"):
+                    live_pipeline["selected_candidate"] = dict(audit.get("selected_candidate") or {})
+                live_payload["pipeline"] = live_pipeline
+                result["live_real_pipeline_data"] = audit
+                if live_payload.get("status") == "BLOCKED_SESSION":
+                    result["synthetic_audit"] = {
+                        "mode": "DRY_RUN",
+                        "reason": "DRY_RUN_AUDIT_ONLY",
+                        "candidates": [],
+                        "scores": [],
+                        "signals": [],
+                        "risk_decisions": [],
+                        "order_intents": [],
+                    }
 
                 result["live"] = live_payload
             else:
@@ -366,15 +386,30 @@ class Orchestrator:
             live_payload = live.to_dict()
             if live_payload.get("status") == "BLOCKED_SESSION":
                 dry = self._dry_runner.run()
-                live_pipeline, synthetic_audit, live_real_data = self._build_live_pipeline_audit(
-                    dry,
-                    live_chain={"candidates": [], "scores": [], "signals": [], "risk_decisions": [], "order_intents": []},
-                    scanner_status="WAITING_FOR_REGULAR_MARKET",
-                    live_pipeline_reason="SESSION_NOT_REGULAR_MARKET",
+                result["synthetic_audit"] = dry
+                audit = build_live_real_readonly_audit(
+                    rest_provider=self._rest_provider,
+                    real_universe_top_n=20,
+                    session=session.value,
                 )
+                live_chain = {
+                    "candidates": list(audit.get("candidates") or []),
+                    "scores": list(audit.get("scores") or []),
+                    "signals": list(audit.get("signals") or []),
+                    "risk_decisions": list(audit.get("risk_decisions") or []),
+                    "order_intents": list(audit.get("order_intents") or []),
+                }
+                live_pipeline, _synthetic_unused, _live_real_unused = self._build_live_pipeline_audit(
+                    {"candidates": [], "scores": [], "signals": [], "risk_decisions": [], "order_intents": []},
+                    live_chain,
+                    scanner_status="WAITING_FOR_REGULAR_MARKET" if live_payload.get("status") == "BLOCKED_SESSION" else str(audit.get("scanner_status") or ""),
+                    live_pipeline_reason="SESSION_NOT_REGULAR_MARKET" if live_payload.get("status") == "BLOCKED_SESSION" else str(audit.get("scanner_reason") or ""),
+                )
+                live_pipeline["scanner_reason"] = str(audit.get("scanner_reason") or "")
+                if audit.get("selected_candidate"):
+                    live_pipeline["selected_candidate"] = dict(audit.get("selected_candidate") or {})
                 live_payload["pipeline"] = live_pipeline
-                result["synthetic_audit"] = synthetic_audit
-                result["live_real_pipeline_data"] = live_real_data
+                result["live_real_pipeline_data"] = audit
             result["live"] = live_payload
             result["actions"].append("live_tick")
         self._state = "idle"
